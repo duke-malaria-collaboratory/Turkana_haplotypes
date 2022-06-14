@@ -1,0 +1,386 @@
+---
+title: "R_est_turnaka_cleanedup"
+author: "Christine Markwalter"
+date: "11/4/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Libraries + data
+```{r}
+library(tidyverse)
+library(lubridate)
+library(igraph)
+library(geosphere)
+library(EpiEstim)
+library(ggsci)
+library(Hmisc)
+set.seed(1)
+
+
+nodes_pcrpos <- read.csv("data/generated_tables/turkana_full_dataset_finaldates.csv", row.names = NULL) %>%
+  filter(pf_pcr_infection_status == "positive", case_type == "facility" | case_type == "household" | (case_type == "bus/plane" & rdt == "negative")) %>%
+  mutate(csp_haplotype_list = ifelse(is.na(csp_haplotype_list), NA, paste0(csp_haplotype_list, ",")), ama_haplotype_list = ifelse(is.na(ama_haplotype_list), NA, paste0(ama_haplotype_list, ","))) 
+
+
+
+edges_pcrpos <- readRDS("data/generated_tables/final_edgelist.rds") %>%
+  ungroup()
+
+```
+
+# WT function
+```{r}
+WT <- function(nodes, edges){
+  ####----FULL DATASET----####
+  #make sure all dates are in the right format
+  nodes$date_final <- ymd(nodes$date_final)
+  
+  #normalize transmission weights 
+  edges <- edges %>%
+  group_by(to) %>%
+  mutate(weight.norm = weight.hh.dist/sum(weight.hh.dist, na.rm = TRUE))
+  
+  #calculate individual R
+  Rc <- edges %>%
+  group_by(from) %>%
+  summarise(Rc = sum(weight.norm, na.rm = TRUE)) %>%
+  rename("study_id" = "from") %>%
+  left_join(nodes_pcrpos %>% select(study_id, date_final, assoc_facility, traveled)) %>%
+  filter(ymd(date_final) < ymd("2019-10-01"), ymd(date_final) > ymd("2018-11-15"))
+  
+  #calculate Rt
+  Rt <- c(0,0,0,0)
+  dates <- seq(ymd("2018-11-15") + days(3), ymd("2019-10-01") - days(3), by = 1)
+  for (d in 1:length(dates)) {
+    week <- Rc %>%
+      filter(ymd(date_final) >= ymd(dates[d]) - days(3), 
+             ymd(date_final) <= ymd(dates[d]) + days(3))
+    
+    matrix_add <- c(as.character(dates[d]), smean.cl.boot(week$Rc))
+    Rt <- rbind(Rt, matrix_add)
+  }
+  Rt <- data.frame(Rt) %>%
+    rename("Date" = "V1") %>%
+    filter(Date != 0) %>%
+    mutate(Date = ymd(Date))
+  
+  
+  #calculate summary R
+  R <- smean.cl.boot(Rc$Rc)
+  
+  
+  ####----REPEAT NO TRAVELERS----####
+  nodes_notravel <- nodes %>%
+    filter(reported_travel == "No")
+  
+  edges_notravel <- edges %>%
+    filter(from %in% nodes_notravel$study_id, to %in% nodes_notravel$study_id)
+  
+  #normalize transmission weights 
+  edges_notravel <- edges_notravel %>%
+  group_by(to) %>%
+  mutate(weight.norm = weight.hh.dist/sum(weight.hh.dist, na.rm = TRUE))
+  
+  #calculate individual R
+  Rc_notravel <- edges_notravel %>%
+  group_by(from) %>%
+  summarise(Rc = sum(weight.norm, na.rm = TRUE)) %>%
+  rename("study_id" = "from") %>%
+  left_join(nodes_pcrpos %>% select(study_id, date_final, assoc_facility, traveled)) %>%
+  filter(ymd(date_final) < ymd("2019-10-01"), ymd(date_final) > ymd("2018-11-15"))
+  
+  #calculate Rt
+  Rt_notravel <- c(0,0,0,0)
+  for (d in 1:length(dates)) {
+    week <- Rc_notravel %>%
+      filter(ymd(date_final) >= ymd(dates[d]) - days(3), 
+             ymd(date_final) <= ymd(dates[d]) + days(3))
+    
+    matrix_add <- c(as.character(dates[d]), smean.cl.boot(week$Rc))
+    Rt_notravel <- rbind(Rt_notravel, matrix_add)
+  }
+  Rt_notravel <- data.frame(Rt_notravel) %>%
+    rename("Date" = "V1") %>%
+    filter(Date != 0) %>%
+    mutate(Date = ymd(Date))
+  
+  
+  #calculate summary R
+  R_notravel <- smean.cl.boot(Rc_notravel$Rc)
+  
+  
+  ####----MERGING DATAFRAMES----####
+  
+  Rc <- rbind(Rc %>% mutate(Network = "all"), Rc_notravel %>% mutate(Network = "no_travel"))
+  
+  Rt <- rbind(Rt %>% mutate(network = "all"), Rt_notravel %>% mutate(network = "no_travel"))
+  
+  Rt$Mean <- as.numeric(Rt$Mean)
+  Rt$Lower <- as.numeric(Rt$Lower)
+  Rt$Upper <- as.numeric(Rt$Upper)
+
+  
+  return(list(Rc = Rc, Rt = Rt, R_all = R, R_notravel = R_notravel, edges = edges))
+}
+```
+
+
+# Only complete households
+Run this to narrow down datasets to only people with complete households
+```{r}
+load("from_hannah/Turkana_facility_case_cleaned_with_complete_HH_qPCR_updated20201123.RData")
+
+load("from_hannah/Turkana_householdmember_cleaned_with_complete_HH_qPCR_updated20201123.RData")
+
+
+
+nodes_pcrpos_narrow <- nodes_pcrpos %>%
+  filter(case_type == "bus/plane" | study_id %in% complete_hm$sample.ID | study_id %in% complete_cp$study_id)
+
+#total nodes 2961 -> 2090
+
+edges_pcrpos_narrow <- edges_pcrpos %>%
+  ungroup() %>%
+  filter(from %in% nodes_pcrpos_narrow$study_id, to %in% nodes_pcrpos_narrow$study_id)
+
+#total edges 4282280 -> 2183005
+
+casetype_colors <- c("#EB9C8F", "#EBC884", "#5AB894")
+travel_colors <- c("#78C4EB", "#8C83EB")
+gene_colors <- c("#8dd3c7", "#ffffb3") 
+
+
+#comparing narrowed and full datasets
+narrowed_fig <- ggplot(NULL, aes(x)) +
+    geom_histogram(nodes_pcrpos, mapping = aes(x = ymd(date_final), fill = factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers"))), binwidth = 31, color = "white") +
+  geom_histogram(nodes_pcrpos_narrow, mapping = aes(x = ymd(date_final), fill = factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers"))), binwidth = 31, color = "black") +
+    scale_fill_manual(values = casetype_colors) +
+    scale_x_date(date_labels = "%b %Y", breaks = c(ymd("2018-09-01"), ymd("2019-10-01"))) +
+    facet_wrap(~factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers")), ncol = 3) +
+    labs(x = "Date", y = "Participants", fill = "Case type") +
+    theme_bw() +
+    theme(legend.position = 'none', strip.background = element_rect(fill = 'white'))
+
+narrowed_fig
+
+ggsave(plot = narrowed_fig, "manuscript/figures/narrowed_set_r_calcs.png", width = 8, height = 3)
+
+
+nodes_pcrpos <- nodes_pcrpos_narrow
+edges_pcrpos <- edges_pcrpos_narrow
+
+
+
+```
+
+
+
+#PCR-pos network
+```{r}
+
+pcrpos <- WT(nodes = nodes_pcrpos, edges = edges_pcrpos)
+
+
+ggplot(pcrpos$Rt %>% filter(!is.na(Mean)), aes(x = ymd(Date), y = Mean, ymin = Lower, ymax = Upper, color = factor(network, levels = c("no_travel", "all"), labels = c("No travel reported", "All participants")), fill = factor(network, levels = c("no_travel", "all"), labels = c("No travel reported", "All participants")))) +
+  geom_line(size = 0.9)+
+  geom_ribbon(alpha = 0.3, color = NA, show.legend = FALSE) +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  scale_color_manual(values = c("#78C4EB","darkgrey"), guide = guide_legend(reverse = TRUE))+
+  scale_fill_manual(values = c("#78C4EB","darkgrey"), guide = guide_legend(reverse = TRUE))+
+  theme_bw()+ 
+  theme(legend.position = "none") +
+  labs(x = "Date", y = "Rt", color = "", fill = "")
+
+# saveRDS(pcrpos, "data/generated_tables/R_pcrpos.RDS")
+
+saveRDS(pcrpos, "data/generated_tables/R_pcrpos_narrow.RDS")
+```
+
+#Share 1 csp
+```{r}
+share1csp <- WT(nodes = nodes_pcrpos, edges = edges_pcrpos %>% filter(csp.shared.count > 0))
+
+ggplot(share1csp$Rt %>% filter(!is.na(Mean)), aes(x = ymd(Date), y = Mean, ymin = Lower, ymax = Upper, color = factor(network, levels = c("no_travel", "all"), labels = c("No travel reported", "All participants")), fill = factor(network, levels = c("no_travel", "all"), labels = c("No travel reported", "All participants")))) +
+  geom_line(size = 0.9)+
+  geom_ribbon(alpha = 0.3, color = NA, show.legend = FALSE) +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  scale_color_manual(values = c("#78C4EB","darkgrey"), guide = guide_legend(reverse = TRUE))+
+  scale_fill_manual(values = c("#78C4EB","darkgrey"), guide = guide_legend(reverse = TRUE))+
+  theme_bw()+ 
+  theme(legend.position = "none") +
+  labs(x = "Date", y = "Rt", color = "", fill = "")
+
+# saveRDS(share1csp, "data/generated_tables/R_share1csp.RDS")
+
+saveRDS(share1csp, "data/generated_tables/R_share1csp_narrow.RDS")
+
+```
+
+
+#Share 1 ama
+```{r}
+share1ama <- WT(nodes = nodes_pcrpos, edges = edges_pcrpos %>% filter(ama.shared.count > 0))
+
+ggplot(share1ama$Rt %>% filter(!is.na(Mean)), aes(x = ymd(Date), y = Mean, ymin = Lower, ymax = Upper, color = factor(network, levels = c("no_travel", "all"), labels = c("No travel reported", "All participants")), fill = factor(network, levels = c("no_travel", "all"), labels = c("No travel reported", "All participants")))) +
+  geom_line(size = 0.9)+
+  geom_ribbon(alpha = 0.3, color = NA, show.legend = FALSE) +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  scale_color_manual(values = c("#78C4EB","darkgrey"), guide = guide_legend(reverse = TRUE))+
+  scale_fill_manual(values = c("#78C4EB","darkgrey"), guide = guide_legend(reverse = TRUE))+
+  theme_bw()+ 
+  theme(legend.position = "none") +
+  labs(x = "Date", y = "Rt", color = "", fill = "")
+
+# saveRDS(share1ama, "data/generated_tables/R_share1ama.RDS")
+
+saveRDS(share1ama, "data/generated_tables/R_share1ama_narrow.RDS")
+
+```
+#csp hap-by-hap
+##hap-specific nodes
+```{r}
+#list of haplotypes
+csp_haplist <- list()
+for(i in 1:72) {
+  hap <- paste0("H", i, ",")
+  csp_haplist[[i]] <- hap
+}
+
+
+#function for generating dataframes with nodes containing each haplotype
+getnodes <- function(hap) {
+  df <- nodes_pcrpos %>%
+    filter(str_detect(csp_haplotype_list, hap) == TRUE)
+  return(df)
+}
+
+#list of dfs for each haplotype
+nodes_df_list <- lapply(csp_haplist, getnodes) 
+names(nodes_df_list) <- csp_haplist
+
+
+names(nodes_df_list) <- names(nodes_df_list) %>% str_remove(",")
+names(nodes_df_list)[1:9] <- c("H01", "H02", "H03", "H04", "H05", "H06", "H07", "H08", "H09")
+
+```
+
+##hap-specific edges
+```{r}
+#function for generating dataframes with nodes containing each haplotype
+getedges <- function(nodes) {
+  df <- edges_pcrpos %>%
+    filter(from %in% nodes$study_id, to %in% nodes$study_id)
+  return(df)
+}
+
+edges_df_list <- lapply(names(nodes_df_list), 
+                        function(x){
+                          print(x)
+                          getedges(nodes_df_list[[x]])
+                          })
+
+names(edges_df_list) <- names(nodes_df_list)
+```
+
+###saving
+```{r}
+# saveRDS(nodes_df_list, "data/generated_tables/csp_nodeslist.RDS")
+# saveRDS(edges_df_list, "data/generated_tables/csp_edgelistlist.RDS")
+
+saveRDS(nodes_df_list, "data/generated_tables/csp_nodeslist_narrow.RDS")
+saveRDS(edges_df_list, "data/generated_tables/csp_edgelistlist_narrow.RDS")
+```
+
+##hap specific WT
+```{r}
+csp_hapbyhap <- lapply(names(nodes_df_list), function(x){
+  print(x)
+  WT(nodes = nodes_df_list[[x]], edges = edges_df_list[[x]])
+})
+```
+
+###saving
+```{r}
+names(csp_hapbyhap) <- names(nodes_df_list)
+#saveRDS(csp_hapbyhap, "data/generated_tables/csp_R_hapbyhap.RDS")
+saveRDS(csp_hapbyhap, "data/generated_tables/csp_R_hapbyhap_narrow.RDS")
+```
+
+
+#ama hap-by-hap
+##hap-specific nodes
+```{r}
+#list of haplotypes
+ama_haplist <- list()
+for(i in 1:88) {
+  hap <- paste0("H", i, ",")
+  ama_haplist[[i]] <- hap
+}
+
+
+#function for generating dataframes with nodes containing each haplotype
+getnodes <- function(hap) {
+  df <- nodes_pcrpos %>%
+    filter(str_detect(ama_haplotype_list, hap) == TRUE)
+  return(df)
+}
+
+#list of dfs for each haplotype
+ama_nodes_df_list <- lapply(ama_haplist, getnodes) 
+names(ama_nodes_df_list) <- ama_haplist
+
+
+names(ama_nodes_df_list) <- names(ama_nodes_df_list) %>% str_remove(",")
+names(ama_nodes_df_list)[1:9] <- c("H01", "H02", "H03", "H04", "H05", "H06", "H07", "H08", "H09")
+
+```
+
+##hap-specific edges
+```{r}
+#function for generating dataframes with nodes containing each haplotype
+getedges <- function(nodes) {
+  df <- edges_pcrpos %>%
+    filter(from %in% nodes$study_id, to %in% nodes$study_id)
+  return(df)
+}
+
+ama_edges_df_list <- lapply(names(ama_nodes_df_list), 
+                        function(x){
+                          print(x)
+                          getedges(ama_nodes_df_list[[x]])
+                          })
+
+names(ama_edges_df_list) <- names(ama_nodes_df_list)
+```
+
+###saving
+```{r}
+# saveRDS(ama_nodes_df_list, "data/generated_tables/ama_nodeslist.RDS")
+# saveRDS(ama_edges_df_list, "data/generated_tables/ama_edgelistlist.RDS")
+
+saveRDS(ama_nodes_df_list, "data/generated_tables/ama_nodeslist_narrow.RDS")
+saveRDS(ama_edges_df_list, "data/generated_tables/ama_edgelistlist_narrow.RDS")
+```
+
+##hap specific WT
+```{r}
+ama_hapbyhap <- lapply(names(ama_nodes_df_list), function(x){
+  print(x)
+  WT(nodes = ama_nodes_df_list[[x]], edges = ama_edges_df_list[[x]])
+})
+```
+
+###saving
+```{r}
+names(ama_hapbyhap) <- names(ama_nodes_df_list)
+#saveRDS(ama_hapbyhap, "data/generated_tables/ama_R_hapbyhap.RDS")
+saveRDS(ama_hapbyhap, "data/generated_tables/ama_R_hapbyhap_narrow.RDS")
+```
+
+
+

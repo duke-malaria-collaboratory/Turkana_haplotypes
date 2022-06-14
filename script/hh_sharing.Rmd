@@ -1,0 +1,219 @@
+---
+title: "household sharing"
+author: "Christine Markwalter"
+date: "8/26/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Loading libraries and data
+```{r}
+library(tidyverse)
+library(lubridate)
+library(ggridges)
+#library(philentropy)
+library(scales)
+library(infer)
+
+edgelist <- readRDS("data/generated_tables/final_edgelist_nodups.rds")
+participants <- read.csv("data/generated_tables/turkana_full_dataset_finaldates.csv")
+
+```
+
+
+# Households with min 2 members with sequences
+```{r}
+
+csp_participants <- participants %>%
+  filter(pf_pcr_infection_status == "positive", csp_reads > 0)
+
+
+csp_households_2 <- csp_participants %>%
+  filter(!is.na(hh_id)) %>%
+  group_by(hh_id) %>%
+  mutate(hh_csp_n = n()) %>%
+  filter(hh_csp_n > 1)
+
+#1067 individuals in 411 households have 2 or more members with csp sequences
+
+
+ama_participants <- participants %>%
+  filter(pf_pcr_infection_status == "positive", ama_reads > 0)
+
+
+ama_households_2 <- ama_participants %>%
+  filter(!is.na(hh_id)) %>%
+  group_by(hh_id) %>%
+  mutate(hh_ama_n = n()) %>%
+  filter(hh_ama_n > 1)
+
+#1075 individuals in 425 households have 2 or more members with csp sequences
+
+
+
+```
+
+
+# Household sharing
+I will determine the proportion of household members that match an individual and estimate the proportion of matches an individual would have with the same number of people outside the household by subsampling people outside the household +/- 30 days from that individual 1000x and finding the average.
+## Proportion of household members that are matches
+```{r}
+
+hh_match_prop <- function(edgelist, samplelist, gene){
+  edgelist <- edgelist %>% 
+    ungroup() %>%
+    filter(hh_pair ==1)
+  if(gene == "csp") {
+    edgelist <- edgelist %>%
+      filter(csp.reads_1 > 0, csp.reads_2 > 0)
+    from <- edgelist %>%
+      mutate(match = ifelse(csp.shared.count > 0, 1,0)) %>%
+      group_by(from) %>%
+      summarise(match_from = sum(match, na.rm = TRUE), total_from = length(match)) %>%
+      rename("study_id" = "from") %>%
+      replace_na(list(match_from = 0, total_from = 0))
+    
+    to <- edgelist %>%
+      mutate(match = ifelse(csp.shared.count > 0, 1,0)) %>%
+      group_by(to) %>%
+      summarise(match_to = sum(match, na.rm = TRUE), total_to = length(match)) %>%
+      rename("study_id" = "to") %>%
+      replace_na(list(match_to = 0, total_to = 0))
+
+  
+    matches <- full_join(from, to, by = "study_id") %>%
+      replace_na(list(match_from = 0, total_from = 0, match_to = 0, total_to = 0)) %>%
+      mutate(total_pairs = total_from + total_to, total_matches = match_from + match_to, prop_matches = total_matches/total_pairs) %>%
+      select(study_id, total_pairs, total_matches, prop_matches) %>%
+      filter(study_id %in% samplelist$study_id)
+  }
+    if(gene == "ama1") {
+    edgelist <- edgelist %>%
+      filter(ama.reads_1 > 0, ama.reads_2 > 0)
+    from <- edgelist %>%
+      mutate(match = ifelse(ama.shared.count > 0, 1,0)) %>%
+      group_by(from) %>%
+      summarise(match_from = sum(match, na.rm = TRUE), total_from = length(match)) %>%
+      rename("study_id" = "from") %>%
+      replace_na(list(match_from = 0, total_from = 0))
+
+    
+    to <- edgelist %>%
+      mutate(match = ifelse(ama.shared.count > 0, 1,0)) %>%
+      group_by(to) %>%
+      summarise(match_to = sum(match, na.rm = TRUE), total_to = length(match)) %>%
+      rename("study_id" = "to") %>%
+      replace_na(list(match_to = 0, total_to = 0))
+  
+    matches <- full_join(from, to, by = "study_id") %>%
+      replace_na(list(no_match_from = 0, match_from = 0, total_from = 0, match_to = 0, total_to = 0)) %>%
+      mutate(total_pairs = total_from + total_to, total_matches = match_from + match_to, prop_matches = total_matches/total_pairs) %>%
+      select(study_id, total_pairs, total_matches, prop_matches) %>%
+      filter(study_id %in% samplelist$study_id)
+  }
+  return(matches)
+}
+
+
+csp_match_prop_hh <- hh_match_prop(edgelist = edgelist, samplelist = csp_households_2, gene = "csp")
+
+ama_match_prop_hh <- hh_match_prop(edgelist = edgelist, samplelist = ama_households_2, gene = "ama1")
+
+```
+
+
+```{r}
+#for any given person, sample n number of people not in their household, and find the proportion of people that they match with, where n = number of people in the household
+set.seed(1)
+
+csp_edgelist_30 <- edgelist %>%
+  ungroup() %>%
+  filter(time.diff_final < 61, csp.reads_1 > 0, csp.reads_2 > 0, case.type_1 != "bus/plane", case.type_2 != "bus/plane")
+
+
+csp_subsample_matches <- matrix(ncol = 2, nrow = length(csp_households_2$study_id))
+for(i in 1:length(csp_households_2$study_id)) {
+  print(i)
+  csp_subsample_matches[i,1] <- csp_households_2$study_id[i]
+  indiv_edgelist <- csp_edgelist_30 %>%
+    filter(from == csp_households_2$study_id[i] | to == csp_households_2$study_id[i]) %>%
+    filter(hh_pair != 1)
+  
+  small_edgelist <- indiv_edgelist %>%
+    ungroup() %>%
+    rep_slice_sample(n = csp_households_2$hh_csp_n[i]-1, reps = 1000) %>%
+    mutate(match = ifelse(csp.shared.count >0, 1,0)) %>%
+    group_by(replicate) %>%
+    summarise(prop = sum(match)/length(match))
+  csp_subsample_matches[i,2] <- median(small_edgelist$prop)
+
+}
+
+csp_subsample_matches <- data.frame(csp_subsample_matches)
+colnames(csp_subsample_matches) <- c("study_id", "prop_match")
+
+
+ama_edgelist_30 <- edgelist %>%
+  ungroup() %>%
+  filter(time.diff_final < 61, ama.reads_1 > 0, ama.reads_2 > 0,case.type_1 != "bus/plane", case.type_2 != "bus/plane")
+
+
+ama_subsample_matches <- matrix(ncol = 2, nrow = length(ama_households_2$study_id))
+for(i in 1:length(ama_households_2$study_id)) {
+  print(i)
+  ama_subsample_matches[i,1] <- ama_households_2$study_id[i]
+  indiv_edgelist <- ama_edgelist_30 %>%
+    filter(from == ama_households_2$study_id[i] | to == ama_households_2$study_id[i]) %>%
+    filter(hh_pair != 1)
+  
+  small_edgelist <- indiv_edgelist %>%
+    ungroup() %>%
+    rep_slice_sample(n = ama_households_2$hh_ama_n[i]-1, reps = 1000) %>%
+    mutate(match = ifelse(ama.shared.count >0, 1,0)) %>%
+    group_by(replicate) %>%
+    summarise(prop = sum(match)/length(match))
+  ama_subsample_matches[i,2] <- median(small_edgelist$prop)
+
+}
+
+ama_subsample_matches <- data.frame(ama_subsample_matches)
+colnames(ama_subsample_matches) <- c("study_id", "prop_match")
+
+
+```
+
+
+## Combining dataframes
+```{r}
+hh_matches_summary <- rbind(csp_match_prop_hh %>%
+                              select(study_id, prop_matches) %>%
+                              rename("prop_match" = "prop_matches") %>%
+                              mutate(gene = "csp", dataset = "data"),
+                            ama_match_prop_hh %>%
+                              select(study_id, prop_matches) %>%
+                              rename("prop_match" = "prop_matches") %>%
+                              mutate(gene = "ama1", dataset = "data"),
+                            csp_subsample_matches %>%
+                              mutate(gene = "csp", dataset = "random_subsample"),
+                            ama_subsample_matches %>%
+                              mutate(gene = "ama1", dataset = "random_subsample")) %>%
+  mutate(prop_match = as.numeric(prop_match))
+
+
+write.csv(hh_matches_summary, "data/generated_tables/hh_matches_summary.csv", row.names = FALSE)
+
+
+ggplot(hh_matches_summary, aes(x = dataset, y = prop_match)) +
+  geom_boxplot() +
+  facet_grid(.~gene) +
+  theme_bw()
+
+```
+
+
+
+

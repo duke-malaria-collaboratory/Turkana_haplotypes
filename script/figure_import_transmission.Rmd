@@ -1,0 +1,141 @@
+---
+title: "Figure for transmission of imported haps"
+author: "Christine Markwalter"
+date: "11/5/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+#Loading libraries and data
+```{r}
+library(tidyverse)
+library(lubridate)
+library(ggsci)
+library(ggpubr)
+library(scales)
+library(ggrepel)
+library(ggraph)
+library(tidygraph)
+library(purrr)
+
+csp <- readRDS("data/generated_tables/csp_R_hapbyhap.RDS")
+ama <- readRDS("data/generated_tables/ama_R_hapbyhap.RDS")
+full_dataset <- read.csv("data/generated_tables/turkana_full_dataset_finaldates.csv")
+
+```
+
+# Reformatting data
+```{r}
+csp_imported <- c("H43", "H31", "H46", "H44", "H40", "H32", "H45")
+ama_imported <- c("H58", "H34", "H22", "H74", "H37", "H56", "H41", "H57", "H19", "H62", "H59")
+
+csp_t <- csp %>%
+  transpose()
+
+csp_edges <- csp_t$edges %>%
+  data.table::rbindlist(use.names = TRUE, idcol = "haplotype") %>%
+  select(from, to, haplotype, weight.norm)
+
+csp_nodes <- full_dataset %>%
+  filter(pf_pcr_infection_status == "positive", csp_moi > 0) 
+
+csp_edges_h <- csp_edges %>%
+  mutate(from = paste0(haplotype, "_", from), to = paste0(haplotype, "_", to), imported = ifelse(haplotype %in% csp_imported, "yes","no"))
+
+csp_nodes_h <- csp_nodes %>%
+  separate(csp_haplotype_list, into = c("a","b","c","d","e","f","g","h","i","j","k","l","m"), sep = ",") %>%
+  pivot_longer(34:46, names_to = "temp", values_to = "csp_haplotype") %>%
+  filter(!is.na(csp_haplotype)) %>%
+  select(study_id, csp_moi, csp_haplotype) %>%
+  mutate(csp_haplotype = sub('(?i)(H)(\\d$)', '\\10\\2', csp_haplotype), study_id = paste0(csp_haplotype, "_", study_id), imported = ifelse(csp_haplotype %in% csp_imported, "yes","no"))
+
+ama_t <- ama %>%
+  transpose()
+
+ama_edges <- ama_t$edges %>%
+  data.table::rbindlist(use.names = TRUE, idcol = "haplotype") %>%
+  select(from, to, haplotype, weight.norm)
+
+ama_nodes <- full_dataset %>%
+  filter(pf_pcr_infection_status == "positive", ama_moi > 0)
+
+ama_edges_h <- ama_edges %>%
+  mutate(from = paste0(haplotype, "_", from), to = paste0(haplotype, "_", to), imported = ifelse(haplotype %in% ama_imported, "yes","no"))
+
+ama_nodes_h <- ama_nodes %>%
+  separate(ama_haplotype_list, into = c("a","b","c","d","e","f","g","h","i","j","k","l","m","n","o"), sep = ",") %>%
+  pivot_longer(37:51, names_to = "temp", values_to = "ama_haplotype") %>%
+  filter(!is.na(ama_haplotype)) %>%
+  select(study_id, ama_moi, ama_haplotype) %>%
+  mutate(ama_haplotype = sub('(?i)(H)(\\d$)', '\\10\\2', ama_haplotype), study_id = paste0(ama_haplotype, "_", study_id), imported = ifelse(ama_haplotype %in% ama_imported, "yes","no"))
+
+```
+
+
+#Graph objects
+```{r}
+csp_h_graph <- tbl_graph(
+  nodes = csp_nodes_h %>%
+    mutate(gene = "csp", imported = ifelse(imported == "no", "Endemic haplotype", csp_haplotype)),
+  edges = csp_edges_h %>%
+    filter(weight.norm >= 0.02) %>%
+    mutate(gene = "csp", imported = ifelse(imported == "no", "Endemic haplotype", haplotype)), directed = TRUE)
+
+ama_h_graph <- tbl_graph(
+  nodes = ama_nodes_h %>% 
+    mutate(gene = "ama1", imported = ifelse(imported == "no", "Endemic haplotype", ama_haplotype)),
+  edges = ama_edges_h %>%
+    filter(weight.norm >= 0.02) %>%
+    mutate(gene = "ama1", imported = ifelse(imported == "no", "Endemic haplotype", haplotype)), directed = TRUE)
+```
+
+#Plotting graphs
+```{r}
+csp_h_plot <- ggraph(csp_h_graph, layout = "kk")+
+  geom_edge_link0(aes(color = imported)) +
+  geom_node_point(aes(color = imported)) +
+  facet_nodes(~gene) +
+  facet_edges(~gene) +
+  scale_edge_color_manual(values = c("grey90",'#e6194b', '#3cb44b','#4363d8', '#f58231', '#911eb4', '#46f0f0','#008080'))+
+  scale_color_manual(values = c(adjustcolor("grey80", alpha.f = 0.5), '#e6194b', '#3cb44b','#4363d8', '#f58231', '#911eb4', '#46f0f0','#008080')) +
+  labs(edge_color = "Candidate imported\ncsp haplotypes", color = "Candidate imported\ncsp haplotypes") +
+  theme_bw() +
+  theme(strip.background = element_rect(fill = adjustcolor("#8dd3c7", alpha.f = 0.5)), strip.text = element_text(face = "italic"), axis.text = element_blank(), axis.title = element_blank(), axis.ticks = element_blank(), panel.grid = element_blank()) 
+
+ggsave(csp_h_plot, file = "manuscript/figures/csp_h_network.png", height = 5, width = 6)
+
+```
+
+```{r}
+ama_h_plot <- ggraph(ama_h_graph, layout = "kk")+
+  geom_edge_link0(aes(color = imported)) +
+  geom_node_point(aes(color = imported)) +
+  facet_nodes(~gene) +
+  facet_edges(~gene) +
+  scale_edge_color_manual(values = c("grey90",'#e6194b', '#3cb44b','#4363d8', '#f58231', '#911eb4', '#46f0f0','#008080','#9a6324','#800000', '#808000', '#000075'))+
+  scale_color_manual(values = c(adjustcolor("grey80", alpha.f = 0.5),'#e6194b', '#3cb44b','#4363d8', '#f58231', '#911eb4', '#46f0f0','#008080','#9a6324','#800000', '#808000', '#000075')) +
+  labs(edge_color = "Candidate imported\nama1 haplotypes", color = "Candidate imported\nama1 haplotypes") +
+  theme_bw() +
+  theme(strip.background = element_rect(fill = adjustcolor("#ffffb3", alpha.f = 0.5)), strip.text = element_text(face = "italic"), axis.text = element_blank(), axis.title = element_blank(), axis.ticks = element_blank(), panel.grid = element_blank())
+
+ggsave(ama_h_plot, file = "manuscript/figures/ama_h_network.png", height = 5, width = 6)
+```
+
+#combining csp and ama
+```{r}
+networks <- ggarrange(csp_h_plot +
+                        guides(color = guide_legend(nrow = 3, reverse = TRUE), edge_color = guide_legend(nrow = 3, reverse = TRUE))+
+                        theme(legend.position = "bottom"),
+                      ama_h_plot +
+                        guides(color = guide_legend(nrow = 3, reverse = TRUE), edge_color = guide_legend(nrow = 3, reverse = TRUE)) +
+                        theme(legend.position = "bottom"))
+
+saveRDS(networks, "manuscript/figures/networks_figure.rds")
+
+ggsave(networks, file = "manuscript/figures/networks.png", height = 6, width = 10)
+```
+
+

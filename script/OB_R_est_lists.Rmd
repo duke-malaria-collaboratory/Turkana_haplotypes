@@ -1,0 +1,417 @@
+---
+title: "OB full/skinny R est"
+author: "Christine Markwalter"
+date: "7/14/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Getting set up and reading in data
+```{r}
+library(tidyverse)
+library(lubridate)
+library(EpiEstim)
+
+
+skinny_OB_list <- readRDS("data/generated_tables/OB_dfs/all_skinny_dfs.rds")
+full_OB <- read.csv("data/generated_tables/full_OB.csv", row.names = NULL)
+malaria_SI <- read.csv("data/generated_tables/malaria_SI.csv") %>%
+  filter(t >= 0, p >= 0)
+malaria_SI$p[malaria_SI$t == 0] <- 0
+```
+
+# Full OB Rt based on pcr-positivity
+```{r}
+##get incidence for pcr positivity
+full_OB_pcrpos <- full_OB %>%
+  filter(haplotype_reads > 0) %>%
+  group_by(date) %>%
+  summarize(I = n())
+
+
+##include all dates
+full_OB_pcrpos$date <- ymd(full_OB_pcrpos$date)
+full_OB_dates <- seq(ymd('2017-06-12'),ymd('2018-07-25'),by='days')
+full_OB_dates <- data.frame(full_OB_dates) %>%
+  rename("date" = full_OB_dates)
+full_OB_pcrpos <- left_join(full_OB_dates, full_OB_pcrpos)
+full_OB_pcrpos$I[is.na(full_OB_pcrpos$I)] <- 0
+
+##estimate Rt
+t_start_full = seq(2, nrow(full_OB_pcrpos)-7)
+t_end_full = t_start_full + 7
+
+full_OB_rt <- wallinga_teunis(full_OB_pcrpos$I, 
+                        method = 'non_parametric_si', 
+                        config = make_config(list(
+                         si_distr = malaria_SI$p,
+                         t_start = t_start_full,
+                         t_end = t_end_full
+                       )))
+
+plot(full_OB_rt)
+
+## summarizing Rt results
+full_df <- data.frame(t_start = full_OB_rt$R$t_start,
+                        est = full_OB_rt$R$`Mean(R)`,
+                        lower_ci = full_OB_rt$R$`Quantile.0.025(R)`,
+                        upper_ci= full_OB_rt$R$`Quantile.0.975(R)`) %>%
+             mutate(date_start = full_OB_pcrpos$date[t_start], date = date_start+3, rcd_limit = "Full OB")
+  
+
+```
+
+#Skinny OB Rt calcualtions
+```{r}
+
+WT_list <- function(skinny_OB) {
+##get incidence for pcr positivity
+skinny_OB_pcrpos <- skinny_OB %>%
+  filter(haplotype_reads > 0) %>%
+  group_by(date) %>%
+  summarize(I = n())
+
+##include all dates
+skinny_OB_pcrpos$date <- ymd(skinny_OB_pcrpos$date)
+skinny_OB_dates <- seq(ymd('2017-06-12'),ymd('2018-07-25'),by='days')
+skinny_OB_dates <- data.frame(skinny_OB_dates) %>%
+  rename("date" = skinny_OB_dates)
+skinny_OB_pcrpos <- left_join(skinny_OB_dates, skinny_OB_pcrpos)
+skinny_OB_pcrpos$I[is.na(skinny_OB_pcrpos$I)] <- 0
+
+##estimate Rt
+t_start_skinny = seq(2, nrow(skinny_OB_pcrpos)-7)
+t_end_skinny = t_start_skinny + 7
+
+skinny_OB_rt <- wallinga_teunis(skinny_OB_pcrpos$I, 
+                        method = 'non_parametric_si', 
+                        config = make_config(list(
+                         si_distr = malaria_SI$p,
+                         t_start = t_start_skinny,
+                         t_end = t_end_skinny
+                       )))
+
+## summarizing Rt results
+skinny_df <- data.frame(t_start = skinny_OB_rt$R$t_start,
+                        est = skinny_OB_rt$R$`Mean(R)`,
+                        lower_ci = skinny_OB_rt$R$`Quantile.0.025(R)`,
+                        upper_ci= skinny_OB_rt$R$`Quantile.0.975(R)`) %>%
+             mutate(date_start = skinny_OB_pcrpos$date[t_start], date = date_start+3)
+
+return(skinny_df)
+
+}
+
+skinny_Rt_list <- lapply(skinny_OB_list, WT_list)
+
+skinny_Rt_df <- bind_rows(skinny_Rt_list, .id = "rcd_limit")
+skinny_Rt_df$rcd_limit <- as.numeric(skinny_Rt_df$rcd_limit)
+```
+
+
+
+
+# Plot with all the curves
+```{r}
+library(RColorBrewer)
+myPalette <- colorRampPalette(brewer.pal(3, "Pastel2"))
+
+Rt_plot<- ggplot(NULL, aes(x,y)) +
+  geom_line(skinny_Rt_df %>% filter(rcd_limit != 24), mapping = aes(x=date, y=est, color= as.factor(rcd_limit)), size = 0.8) +
+  geom_hline(yintercept = 1, linetype="dashed") +
+  scale_color_viridis_d(begin = 0.3, alpha = 0.8) +
+  #scale_color_manual(values = myPalette(24)) +
+  #scale_fill_manual(values = myPalette(24)) +
+  geom_line(full_df, mapping = aes(x=date, y=est, ymin=lower_ci, ymax=upper_ci), color = "black", size = 1) +
+  geom_ribbon(full_df, mapping = aes(x=date, y=est, ymin=lower_ci, ymax=upper_ci), alpha = 0.2) +
+  theme_bw() +
+  theme(legend.position = "none") +
+  labs(y = "Rt", x = "Date")
+  
+Rt_plot
+```
+
+
+# Scatter plot comparing Rt estimates for skinny and full OB
+```{r}
+skinny_Rt_df$rcd_limit <- as.factor(skinny_Rt_df$rcd_limit)
+merged <- skinny_Rt_df %>%
+  left_join(full_df %>% select(-t_start, -date_start, -rcd_limit) %>% rename("full_est" = "est", "full_lower_ci" = "lower_ci", "full_upper_ci" = "upper_ci"), by = "date")
+
+
+fullvskinny <- ggplot(merged %>% filter(!is.na(rcd_limit), rcd_limit != 24), aes(x = full_est, y = est, color = rcd_limit)) +
+  geom_point() +
+  scale_color_viridis_d(begin = 0.3, alpha = 0.8) +
+  geom_abline(slope=1, intercept=0) +
+  scale_x_continuous(limits = c(0,3))+
+  scale_y_continuous(limits = c(0,6)) +
+  labs(x = "Rt, full dataset", y = "Rt, simulated reactive case detection", color = "Reactive events/month limit") +
+  theme_bw()
+
+fullvskinny
+
+
+p3 <- ggplot(merged %>% filter(rcd_limit != 24) %>% mutate(dist = (est - full_est)) %>% filter(!is.na(dist)), aes(x = date, y = dist, color = rcd_limit)) +
+  geom_point() +
+  scale_color_viridis_d(begin = 0.3, alpha = 0.8) +
+  geom_hline(yintercept = 0) +
+  labs(x = "Date", y = "\u0394 Rt", color = "rcd limit") +
+  theme_bw()
+
+p3
+
+p4<- ggplot(merged %>% filter(!rcd_limit %in% c(1,24)) %>% mutate(dist = (est - full_est)) %>% filter(!is.na(dist)), aes(x = full_est, y = dist/full_est, color = rcd_limit)) +
+  geom_point() +
+  scale_color_viridis_d(begin = 0.3, alpha = 0.8) +
+  geom_hline(yintercept = 0) +
+  labs(x = "Full dataset Rt", y = "\u0394 Rt/(Full Rt)", color = "rcd limit") +
+  theme_bw()
+
+p4
+
+p5<- ggplot(merged %>% filter(!rcd_limit %in% c(1,24)) %>% mutate(dist = (est - full_est)) %>% filter(!is.na(dist)), aes(x = full_est, y = dist, color = rcd_limit)) +
+  geom_point() +
+  scale_color_viridis_d(begin = 0.3, alpha = 0.8) +
+  geom_hline(yintercept = 0) +
+  labs(x = "Full dataset Rt", y = "\u0394 Rt", color = "rcd limit") +
+  theme_bw()
+ p5
+
+```
+
+#Correlation between skinny and full
+```{r}
+merged <- merged %>% 
+  filter(!is.na(rcd_limit), rcd_limit != 24)
+
+#do spearman's rho
+
+cor.test(x = merged$full_est, y = merged$est, method = "spearman")
+
+
+```
+#Estimating overall R
+```{r}
+t_start <- c(2, 61, 350) 
+t_end <- c(60, 349, 409)
+
+full_R <- wallinga_teunis(full_OB_pcrpos$I, 
+                        method = 'non_parametric_si', 
+                        config = make_config(list(
+                         si_distr = malaria_SI$p,
+                         t_start = t_start,
+                         t_end = t_end
+                       )))
+
+
+full_R$R
+
+
+####For skinny
+Overall_WT_list <- function(skinny_OB) {
+##get incidence for pcr positivity
+skinny_OB_pcrpos <- skinny_OB %>%
+  filter(haplotype_reads > 0) %>%
+  group_by(date) %>%
+  summarize(I = n())
+
+##include all dates
+skinny_OB_pcrpos$date <- ymd(skinny_OB_pcrpos$date)
+skinny_OB_dates <- seq(ymd('2017-06-12'),ymd('2018-07-25'),by='days')
+skinny_OB_dates <- data.frame(skinny_OB_dates) %>%
+  rename("date" = skinny_OB_dates)
+skinny_OB_pcrpos <- left_join(skinny_OB_dates, skinny_OB_pcrpos)
+skinny_OB_pcrpos$I[is.na(skinny_OB_pcrpos$I)] <- 0
+
+##estimate R
+
+
+skinny_OB_R <- wallinga_teunis(skinny_OB_pcrpos$I, 
+                        method = 'non_parametric_si', 
+                        config = make_config(list(
+                         si_distr = malaria_SI$p,
+                         t_start = t_start,
+                         t_end = t_end
+                       )))
+
+return(skinny_OB_R)
+
+}
+
+skinny_R <- lapply(skinny_OB_list, Overall_WT_list)
+temp <- transpose(skinny_R)
+skinny_R_df <- bind_rows(temp$R, .id = "rcd_limit")
+
+overall_R_plot <- ggplot(skinny_R_df %>% filter(rcd_limit != 24, t_start == 61), aes(x = `Mean(R)`, xmin = `Quantile.0.025(R)`, xmax = `Quantile.0.975(R)`, y = factor(as.numeric(rcd_limit)))) +
+  ggstance::geom_pointrangeh(aes(color = factor(as.numeric(rcd_limit)))) +
+  scale_color_viridis_d(begin = 0.3, alpha = 0.8) +
+  ggstance::geom_pointrangeh(data = full_R$R %>% filter(t_start == 61), mapping = aes(x = `Mean(R)`, xmin = `Quantile.0.025(R)`, xmax = `Quantile.0.975(R)`, y = factor(24))) +
+  scale_y_discrete(limits = factor(c(1:24)), labels = c(1:23, "None")) +
+  labs(y = "Montly reactive event limit", x = "Estimated Overall R") +
+  theme_bw() +
+  theme(legend.position = "none")
+
+overall_R_plot
+
+```
+
+
+#Manuscript figure
+```{r}
+OBfig <- ggarrange(overall_R_plot,
+          Rt_plot,
+          fullvskinny,
+          common.legend = TRUE,
+          legend = "none",
+          nrow = 1,
+          labels = c("a","b", "c"))
+
+OBfig
+
+ggsave(plot = OBfig, "manuscript/figures/OBfig.png", height = 4, width = 10)
+
+
+```
+
+
+
+
+
+----Stop here---
+# Proportion of events captured
+```{r}
+months_df <- read.csv("data/generated_tables/OB_dfs/skinny_OB-23.csv") %>%
+  filter(reactive_event == "yes") %>%
+  select(month_year, reactive_id) %>%
+  distinct() %>%
+  group_by(month_year) %>%
+  summarize(total_events = n())
+
+
+#make columns with the proportion of monthly events captured in that month given the limit i
+for(i in 1:23) {
+  months_df <- months_df %>% mutate_(.dots = setNames(list(paste0("ifelse(total_events >", i, ",", i, "/total_events,1)")), i))
+  }
+
+months_df$month_year <- ym(months_df$month_year)
+
+next_month <- months_df %>%
+  mutate(shift_month = month_year - months(1)) %>%
+  select(-month_year) %>%
+  rename("month_year" = "shift_month", "total_events_nextmonth" = "total_events") %>%
+  pivot_longer(2:24, names_to = "rcd_limit", values_to = "prop_events_nextmonth")
+  
+
+#Now, I want to get the Rt estimates in there. But first, I will pivot longer
+months_df <- months_df %>%
+  pivot_longer(3:25, names_to = "rcd_limit", values_to = "prop_events") %>%
+  left_join(next_month) %>%
+  mutate(events = ifelse(total_events > rcd_limit, rcd_limit, total_events), events_nextmonth = ifelse(total_events_nextmonth > rcd_limit, rcd_limit, total_events_nextmonth))
+
+
+
+fullOB_Rt_summary <- full_df %>%
+  mutate(month_year = ym(paste0(year(date),"-",month(date)))) %>%
+  group_by(month_year) %>%
+  summarize(full_est = mean(est))
+  
+
+Rt_month_summary <- merged %>%
+  filter(rcd_limit != 24) %>%
+  mutate(month_year = ym(paste0(year(date),"-",month(date)))) %>%
+  group_by(month_year, rcd_limit) %>%
+  summarize(est = mean(est)) %>% #note this is taking the mean over dates and does not include weights for the number of people who contribute to Rt for a given time
+  full_join(months_df) %>%
+  left_join(fullOB_Rt_summary) %>%
+  mutate(dRt = est - full_est, rel_dRt = dRt/full_est)
+
+```
+## Exploring some plots
+```{r}
+ggplot(months_df, aes(x = month_year, y = prop_events, color = as.numeric(rcd_limit))) +
+  geom_point() +
+  scale_color_viridis_c() +
+  theme_bw()
+
+ggplot(Rt_month_summary , aes(x = prop_events, y = dRt, color = as.numeric(rcd_limit))) +
+  geom_point() +
+  scale_color_viridis_c() +
+  geom_hline(yintercept = 0) +
+  theme_bw()
+#no clear patterns
+
+ggplot(Rt_month_summary , aes(x = prop_events_nextmonth, y = dRt, color = as.numeric(rcd_limit))) +
+  geom_point() +
+  scale_color_viridis_c() +
+  geom_hline(yintercept = 0) +
+  theme_bw()
+
+
+ggplot(Rt_month_summary, aes(x = prop_events_nextmonth - prop_events, y = dRt, color = as.numeric(rcd_limit))) +
+  geom_point() +
+  scale_color_viridis_c() +
+  geom_hline(yintercept = 0) +
+  theme_bw()
+
+
+ggplot(Rt_month_summary, aes(x = month_year, y = prop_events_nextmonth/prop_events, color = as.factor(as.numeric(rcd_limit)))) +
+  geom_line() +
+  scale_color_viridis_d() +
+  theme_bw()
+
+
+
+ggplot(NULL, aes(x,y))+
+  geom_line(Rt_month_summary, mapping = aes(x = month_year, color = as.factor(as.numeric(rcd_limit)), y = prop_events_nextmonth-prop_events))+
+  geom_point(merged %>% filter(rcd_limit != 24) %>% mutate(dist = (est - full_est)) %>% filter(!is.na(dist)), mapping = aes(x = date, y = dist/3, color = rcd_limit), alpha = 0.1) +
+  scale_y_continuous(name = "prop_events_nextmonth-prop_events", sec.axis = sec_axis(trans=(~.*3), name = "dRt")) +
+  scale_color_viridis_d() +
+  theme_bw()+
+  labs(x = "Date", y = "prop_nextmonth - prop_thismonth", color = "rcd limit")
+
+ggplot(Rt_month_summary, aes(x = month_year, y = as.numeric(events_nextmonth)-as.numeric(events), color = as.factor(as.numeric(rcd_limit)))) +
+  geom_line() +
+  scale_color_viridis_d() +
+  theme_bw()
+
+```
+
+# Trying to understand where the Turkana dataset falls
+```{r}
+turkana_facility_counts <- read.csv("data/turkana_facility_monthly_cases_cleaned.csv") %>%
+  select(periodcode, organisationunitcode, total_positive) %>%
+  mutate(month = ym(periodcode), assoc_facility = ifelse(organisationunitcode == 15661, "StMonica", ifelse(organisationunitcode == 18360, "Ngiitakito", ifelse(organisationunitcode == 14838, "Kerio", ifelse(organisationunitcode == 18354, "Nakechichok", ifelse(organisationunitcode == 15275, "Nadoto", ifelse(organisationunitcode == 15662, "StPatrick", NA)))))))
+
+
+study_facility_counts <- nodes_pcrpos %>%
+  filter(case_type == "facility") %>%
+  group_by(assoc_facility, date) %>%
+  count()
+
+study_facility_counts <- data.frame(study_facility_counts) %>%
+  rename("study_positive" = "n") %>%
+  mutate(date = ymd(date)) %>%
+  left_join(turkana_facility_counts %>% rename("date" = "month") %>% select(date, assoc_facility, total_positive)) %>%
+  mutate(prop = study_positive/total_positive) %>%
+
+
+study_counts <- study_facility_counts %>%
+  group_by(date) %>%
+  summarize(total_positive = sum(total_positive, na.rm = TRUE), study_positive = sum(study_positive, na.rm = TRUE)) %>%
+  mutate(prop = study_positive/total_positive)
+
+ggplot(study_facility_counts, aes(x = date, y = prop, color = assoc_facility)) +
+  geom_line(alpha = 0.5) +
+  geom_point(alpha = 0.5) +
+  geom_line(study_counts, mapping = aes(x = date, y = prop), color = "black") +
+  geom_point(study_counts, mapping = aes(x = date, y = prop), color = "black") +
+  scale_color_locuszoom() +
+  theme_bw()
+
+sum(study_counts$study_positive, na.rm = TRUE)/sum(study_counts$total_positive, na.rm = TRUE)
+
+```
+

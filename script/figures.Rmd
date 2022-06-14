@@ -1,0 +1,1078 @@
+---
+title: "Turkana figures and tables"
+author: "Christine Markwalter"
+date: "8/13/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Loading data and libraries
+```{r}
+library(tidyverse)
+library(lubridate)
+library(ggridges)
+library(ggsci)
+library(ggpubr)
+library(scales)
+library(ggrepel)
+library(ggVennDiagram)
+library(rstatix)
+library(ggpattern)
+library(ragg)
+
+full_dataset <- read.csv("data/generated_tables/turkana_full_dataset_finaldates.csv")
+
+full_dataset$returning_visitor[full_dataset$case_type == "bus/plane" & full_dataset$country_res != "KENYA"] <- "visitor"
+
+full_dataset <- full_dataset %>%
+  mutate(group = ifelse(
+    reported_travel == "Yes" & case_type == "bus/plane" & returning_visitor == "returning", "Inbound passenger - returning", ifelse(
+      reported_travel == "Yes" & case_type == "bus/plane" & returning_visitor == "visitor", "Inbound passenger - visitor", ifelse(
+        reported_travel == "Yes" & case_type == "facility" & urban_rural == "Urban", "Index case reporting travel - urban", ifelse(
+          reported_travel == "No" & case_type == "facility" & urban_rural == "Urban", "Index case no travel - urban", ifelse(
+            reported_travel == "Yes" & case_type == "facility" & urban_rural == "Rural", "Index case reporting travel - rural", ifelse(
+              reported_travel == "No" & case_type == "facility" & urban_rural == "Rural", "Index case no travel - rural", ifelse(
+                reported_travel == "Yes" & case_type == "household" & urban_rural == "Urban", "Household member reporting travel - urban", ifelse(
+                  reported_travel == "No" & case_type == "household" & urban_rural == "Urban", "Household member no travel - urban", ifelse(
+                    reported_travel == "Yes" & case_type == "household" & urban_rural == "Rural", "Household member reporting travel - rural", ifelse(
+                      reported_travel == "No" & case_type == "household" & urban_rural == "Rural", "Household member no travel - rural", NA)))))))))))
+
+full_dataset$group <- factor(full_dataset$group, levels = c(
+  "Index case no travel - urban",
+  "Index case no travel - rural",
+  "Household member no travel - urban",
+  "Household member no travel - rural",
+  "Index case reporting travel - urban",
+  "Index case reporting travel - rural",
+  "Household member reporting travel - urban",
+  "Household member reporting travel - rural",
+  "Inbound passenger - returning",
+  "Inbound passenger - visitor"
+))
+
+
+edgelist <- readRDS("data/generated_tables/final_edgelist_nodups.rds")
+csp_merged <- readRDS("data/generated_tables/csp_merged.rds")%>% 
+  filter(study_id %in% full_dataset$study_id) %>%
+  select(study_id, haplotype, reads, moi, total_reads, case_type) %>%
+  left_join(full_dataset %>% select(-csp_reads, -csp_haplotype_list, -ama_moi, -ama_reads, -ama_haplotype_list, -case_type))
+ama_merged <- readRDS("data/generated_tables/ama_merged.rds")%>% 
+  filter(study_id %in% full_dataset$study_id) %>%
+  select(study_id, haplotype, reads, moi, total_reads, case_type) %>%
+  left_join(full_dataset %>% select(-csp_reads, -csp_haplotype_list, -ama_moi, -ama_reads, -ama_haplotype_list, -case_type))
+
+```
+
+# Setting color pallettes
+I want to set color pallettes that are consisten for comparing particular groups (case types, sites, travel, etc)
+```{r}
+
+casetype_colors <- c("#EB9C8F", "#EBC884", "#5AB894")
+travel_colors <- c("#78C4EB", "#8C83EB")
+gene_colors <- c("#8dd3c7", "#ffffb3") 
+
+#function for coloring facet strips
+# grob plotting function to plot panel colors
+# p is plot, fills is colors you want for strip labels
+plot_panel_cols <- function(p, fills){
+  gt <- ggplot_gtable(ggplot_build(p))
+  strip_both <- which(grepl('strip-', gt$layout$name))
+  k <- 1
+  for (i in strip_both) {
+    j <- which(grepl('rect', gt$grobs[[i]]$grobs[[1]]$childrenOrder))
+    gt$grobs[[i]]$grobs[[1]]$children[[j]]$gp$fill <- fills[k]
+    k <- k+1
+  }
+  as_ggplot(gt)
+}
+
+#function in increase vertical spacing between legend keys
+draw_key_polygon3 <- function(data, params, size) {
+  lwd <- min(data$size, min(size) / 4)
+  
+  grid::rectGrob(
+    width = grid::unit(0.6, "npc"),
+    height = grid::unit(0.6, "npc"),
+    gp = grid::gpar(
+      col = data$colour,
+      fill = alpha(data$fill, data$alpha),
+      lty = data$linetype,
+      lwd = lwd * .pt,
+      linejoin = "mitre"
+    ))
+}
+
+```
+
+
+# Figure 2
+
+### Incidence curve
+This is a figure that shows the cases in the study over time, colored by case type
+```{r}
+
+full_dataset$reported_travel <- factor(full_dataset$reported_travel, levels = c("No", "Yes"), labels = c("No reported travel", "Reported travel"))
+
+p2a <- full_dataset %>%
+  mutate(date_final = ymd(date_final),
+         case_type = factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers")),
+         pf_pcr_infection_status = factor(pf_pcr_infection_status, levels = c("negative", "positive"), labels = c("PCR-negative", "PCR-positive"))) %>%
+           ggplot(aes(x = date_final, color = case_type, group = interaction(pf_pcr_infection_status, case_type, lex.order = TRUE))) +
+  geom_histogram_pattern(aes(pattern_fill = case_type, pattern_color = case_type),
+                         pattern = "stripe",
+                                    pattern_angle = 45,
+                                    pattern_density = 0.1,
+                                    pattern_spacing = 0.05,
+                                    fill = 'grey98',
+                                    pattern_alpha = 0.5,
+                                    binwidth = 31) +
+  scale_color_manual(values = casetype_colors, name = "PCR negative") +
+  scale_pattern_color_manual(values = casetype_colors, name = "PCR negative") +
+  scale_pattern_fill_manual(values = casetype_colors, name = "PCR negative") +
+  guides(color = guide_legend(override.aes = list(alpha = 0))) +
+  geom_histogram(aes(fill = case_type, alpha = pf_pcr_infection_status), binwidth = 31, position = "stack") +
+  scale_fill_manual(values = c("#F0B1A8", "#F1D8A7", "#7EC8AC")) +
+  scale_alpha_manual(values = c(0,1), guide = "none") +
+  scale_x_date(date_labels = "%b %Y", breaks = c(ymd("2018-09-01"), ymd("2019-10-01"))) +
+  facet_wrap(~factor(reported_travel), nrow = 1) +
+  labs(x = "Date", y = "Participants", fill = "PCR positive") +
+  theme_bw()
+
+p2a <- plot_panel_cols(p2a, adjustcolor(travel_colors, alpha.f = 0.5))
+
+p2a
+
+
+
+```
+
+### Parasite densities
+```{r}
+density_means_travel <- full_dataset %>%
+  filter(pf_pcr_infection_status == "positive") %>%
+  group_by(reported_travel) %>%
+  summarise(avg = mean(pfr364Q_std_combined), sd = sd(pfr364Q_std_combined), med = median(pfr364Q_std_combined))
+
+density_means_casetype <- full_dataset %>%
+  filter(pf_pcr_infection_status == "positive") %>%
+  group_by(case_type) %>%
+  summarise(avg = mean(pfr364Q_std_combined), sd = sd(pfr364Q_std_combined), med = median(pfr364Q_std_combined))
+
+p2b <- ggplot(full_dataset %>% filter(pf_pcr_infection_status == "positive"), aes(x = pfr364Q_std_combined, group = factor(reported_travel), fill = factor(reported_travel), color = factor(reported_travel))) +
+  geom_density(alpha = 0.5, size = 1, ) +
+  geom_point(data = density_means_travel, mapping = aes(x = med,  y = 0, color = factor(reported_travel)), pch = 21, size = 3, color = "white", show.legend = FALSE) +
+  scale_color_manual(values = travel_colors, name = "") +
+  scale_fill_manual(values = travel_colors, name = "") +
+  scale_x_continuous(trans = "log10", labels = function(x) sprintf("%g", x))+
+  theme_bw() +
+  theme(legend.position = "none", strip.background = element_rect(fill = 'white')) +
+  labs(x = "Parasites/\U00B5l", y = "Density")
+
+p2b
+
+
+
+```
+
+
+### MOI
+This is a figure that shows the difference in Moi's between bus/plane travelers, facility patients, and household members
+```{r}
+moi <- full_dataset %>%
+  pivot_longer(cols = c("csp_moi", "ama_moi"), names_to = "gene", values_to = "moi")
+
+moi_means_casetype <- moi %>%
+  filter(pf_pcr_infection_status == "positive", !is.na(moi)) %>%
+  group_by(case_type, gene) %>%
+  summarise(avg = mean(moi), sd = sd(moi), med = median(moi))
+
+moi_means_casetype$case_type <- factor(moi_means_casetype$case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers"))
+
+moi_means_casetype$gene <- factor(moi_means_casetype$gene, levels = c("csp_moi", "ama_moi"), labels = c("csp", "ama1"))
+
+moi_means_travel <- moi %>%
+  filter(pf_pcr_infection_status == "positive", !is.na(moi)) %>%
+  group_by(reported_travel, gene) %>%
+  summarise(avg = mean(moi), sd = sd(moi), med = median(moi))
+
+moi_means_travel$reported_travel <- factor(moi_means_travel$reported_travel)
+
+moi_means_travel$gene <- factor(moi_means_travel$gene, levels = c("csp_moi", "ama_moi"), labels = c("csp", "ama1"))
+
+moi$reported_travel <- factor(moi$reported_travel)
+
+moi$case_type <- factor(moi$case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers"))
+
+moi$gene <- factor(moi$gene, levels = c("csp_moi", "ama_moi"), labels = c("csp", "ama1"))
+
+p2c <- ggplot(moi %>% filter(pf_pcr_infection_status == "positive", !is.na(moi)), mapping = aes(x = moi, fill = fct_rev(reported_travel), group = fct_rev(reported_travel), color = fct_rev(reported_travel))) +
+  geom_histogram(aes(y = ..density..),position = "identity", alpha = 0.5, binwidth = 1, size = 0.5) +
+  geom_point(data = moi_means_travel, mapping = aes(x = med,  y = c(0,0,0.01,0.01), color = reported_travel), pch = 21, size = 3, color = "white", show.legend = FALSE) +
+  scale_fill_manual(name = "Reported travel", values = rev(travel_colors)) +
+  scale_color_manual(name = "Reported travel", values = rev(travel_colors)) +
+  scale_x_continuous(limits = c(0,15)) +
+  facet_wrap(~gene) +
+  theme_bw() +
+  labs(y = "Relative frequency within travel group", x = "Multiplicity of infection") +
+  theme(strip.text = element_text(face = "italic"))
+
+p2c <- plot_panel_cols(p2c, adjustcolor(gene_colors, alpha.f = 0.5))
+
+p2c
+
+
+
+
+```
+
+## Combining panels
+```{r}
+fig2 <- ggarrange(p2a, 
+                  ggarrange(p2b,
+                            NULL,
+                            p2c,
+                            NULL,
+                            nrow = 1,
+                            labels = c("b","", "c",""),
+                            label.y = 1.05,
+                            widths = c(1,0.01,2.5,0.05)),
+                  nrow = 2,
+                  heights = c(1,0.8),
+                  labels = c("a"))
+
+
+fig2
+
+ggsave(plot = fig2, "figures/fig2.png", width = 11, height = 7)
+
+
+ragg::agg_tiff("figures/fig2.tiff", height = 3.3, width = 5.17, units = "in", res = 600, scaling = 0.47)
+fig2
+dev.off()
+
+```
+
+
+#Figure S2
+```{r}
+pS2a <- ggplot(NULL, aes(x)) +
+  geom_histogram(full_dataset, mapping = aes(x = ymd(date_final)), fill = "lightgray", binwidth = 31, color = "white") +
+  geom_histogram(full_dataset %>% filter(pf_pcr_infection_status == "positive"), mapping = aes(x = ymd(date_final), fill = factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers"))), binwidth = 31, color = "white") +
+  scale_fill_manual(values = casetype_colors) +
+  scale_x_date(date_labels = "%b %Y", breaks = c(ymd("2018-09-01"), ymd("2019-10-01"))) +
+  facet_wrap(~factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers")), ncol = 3) +
+  labs(x = "Date", y = "Participants", fill = "Case type") +
+  theme_bw() +
+  theme(legend.position = 'none', strip.background = element_rect(fill = 'white'))
+
+pS2a
+
+
+
+pS2b <- ggplot(full_dataset %>% filter(pf_pcr_infection_status == "positive"), aes(x = pfr364Q_std_combined, group = factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers")), fill = factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers")), color = factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers")))) +
+  geom_density(alpha = 0.5, size = 1, ) +
+  geom_point(data = density_means_casetype, mapping = aes(x = med,  y = 0, color = factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers"))), pch = 21, size = 3, color = "white", show.legend = FALSE) +
+  scale_color_manual(values = casetype_colors, name = "Case type") +
+  scale_fill_manual(values = casetype_colors, name = "Case type") +
+  scale_x_continuous(trans = "log10", labels = function(x) sprintf("%g", x))+
+  theme_bw() +
+  theme(legend.position = "none", strip.background = element_rect(fill = 'white')) +
+  labs(x = "Parasites/\U00B5l", y = "Density")
+
+pS2b
+
+
+
+
+pS2c <- ggplot(moi %>% filter(pf_pcr_infection_status == "positive", !is.na(moi)), mapping = aes(x = moi, fill = case_type, color = case_type)) +
+  geom_histogram(aes(y = ..density..),position = "identity", alpha = 0.4, binwidth = 1, size = 0.5) +
+  facet_wrap(~gene) +
+  geom_point(data = moi_means_casetype, mapping = aes(x = med,  y = c(0,0,0.01,0,0,0.01), color = case_type), pch = 21, size = 3, color = "white", show.legend = FALSE) +
+  scale_fill_manual(name = "Case type", values = casetype_colors) +
+  scale_color_manual(name = "Case type", values = casetype_colors) +
+  scale_x_continuous(limits = c(0,14) ) +
+  theme_bw() +
+  labs(y = "Relative frequency within case type", x = "Multiplicity of infection") +
+  theme(strip.text = element_text(face = "italic"), strip.background = element_rect(fill = 'white'))
+
+pS2c
+
+
+
+
+
+figS2 <- ggarrange(pS2a, 
+                  ggarrange(pS2b,
+                            NULL,
+                            pS2c,
+                            nrow = 1,
+                            labels = c("b", "", "c"),
+                            widths = c(1,0.05, 2.5)),
+                  nrow = 2,
+                  heights = c(1,1),
+                  labels = c("a"))
+
+
+figS2
+
+ggsave(plot = figS2, "figures/figS2.png", width = 10, height = 7)
+
+
+```
+
+
+
+
+#Figure S3
+Haplotype distribution stratified by travel, case type, and setting.
+```{r}
+
+csp_hap_bygroup <- ggplot(csp_merged %>% group_by(haplotype, group) %>% summarise(n = n(), travel = ifelse(str_detect(group, "reporting"), "Reported travel", ifelse(str_detect(group, "passenger"), "Reported travel", "No reported travel"))) %>% unique() %>% group_by(haplotype) %>% mutate(unique_travel = n_distinct(travel), unique_group = n_distinct(group), travel_cat = ifelse(unique_travel == 2, "Haplotype in both travelers and non-travelers", ifelse(str_detect(travel,"No"), "No reported travel", "Reported travel"))), aes(x = fct_reorder(haplotype, unique_group, .desc = TRUE), y = n, fill = group)) +
+  geom_col(position = "fill", color = "white") +
+  scale_fill_manual(values = c("#08519c","#4292c6","#9ecae1","#c6dbef","#dadaeb","#bcbddc","#9e9ac8", "#807dba","#6a51a3","#3f007d"))+
+  labs(y = "Proportion", x= "Haplotype", title = "csp")+
+  guides(fill = guide_legend(ncol = 2, reverse = TRUE)) +
+  facet_grid(~travel_cat, scales = "free", space = "free") +
+  theme_bw() +
+  theme(legend.title = element_blank(), legend.position = "bottom", axis.text.x = element_text(angle = 90, vjust = 0.5, size = 8), strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face = "italic"))
+
+csp_hap_bygroup
+
+ama_hap_bygroup <- ggplot(ama_merged %>% group_by(haplotype, group) %>% summarise(n = n(), travel = ifelse(str_detect(group, "reporting"), "Reported travel", ifelse(str_detect(group, "passenger"), "Reported travel", "No reported travel"))) %>% unique() %>% group_by(haplotype) %>% mutate(unique_travel = n_distinct(travel), unique_group = n_distinct(group), travel_cat = ifelse(unique_travel == 2, "Haplotype in both travelers and non-travelers", ifelse(str_detect(travel,"No"), "No reported travel", "Reported travel"))), aes(x = fct_reorder(haplotype, unique_group, .desc = TRUE), y = n, fill = group)) +
+  geom_col(position = "fill", color = "white") +
+  scale_fill_manual(values = c("#08519c","#4292c6","#9ecae1","#c6dbef","#dadaeb","#bcbddc","#9e9ac8", "#807dba","#6a51a3","#3f007d"))+
+  labs(y = "Proportion", x= "Haplotype", title = "ama1")+
+  guides(fill = guide_legend(ncol = 2, reverse = TRUE)) +
+  facet_grid(~travel_cat, scales = "free", space = "free") +
+  theme_bw() +
+  theme(legend.title = element_blank(), legend.position = "bottom", axis.text.x = element_text(angle = 90, vjust = 0.5, size = 8), strip.background = element_blank(), strip.text = element_blank(), plot.title = element_text(hjust = 0.5, face = "italic"))
+
+ama_hap_bygroup
+
+hap_dist <- ggarrange(csp_hap_bygroup + theme(legend.position = "none", axis.title.x = element_blank()),
+          ama_hap_bygroup,
+          heights = c(1,2.1),
+          ncol = 1)
+
+ggsave(plot = hap_dist, "figures/figS3.png", height = 5, width = 9)
+
+```
+
+
+# Figure 3
+
+##By site
+```{r}
+p3a <- ggplot(csp_merged %>% filter(case_type != "Traveler") %>% group_by(haplotype, assoc_facility) %>% summarise(n = n()) %>% unique() %>% group_by(haplotype) %>% mutate(unique_sites = n_distinct(assoc_facility)), aes(x = fct_reorder(haplotype, unique_sites, .desc = TRUE), y = n, fill = factor(assoc_facility, levels = c("Kerio", "Nadoto", "Nakechichok", "Ngiitakito", "StMonica", "StPatrick"), labels = c("Kerio", "Nadoto", "Nakechichok", "Ngiitakito", "St. Monica", "St. Patrick")))) +
+  geom_col(position = "fill", color = "white") +
+  scale_fill_viridis_d(begin = 0.3)+
+  labs(y = "Proportion", x= "Haplotype", title = "csp")+
+  guides(fill = guide_legend(ncol = 2)) +
+  theme_bw() +
+  theme(legend.title = element_blank(), legend.position = "bottom", axis.text.x = element_text(angle = 90, vjust = 0.5, size = 8), plot.title = element_text(hjust = 0.5, face = "italic"))
+
+p3a
+
+
+
+```
+
+
+##Time
+```{r}
+csp_edgelist <- edgelist %>%
+  ungroup() %>%
+  filter(!is.na(csp.reads_1), !is.na(csp.reads_2)) %>%
+  mutate(csp.binaryshare = ifelse(csp.shared.count > 0, 1,0))
+
+csp_edgelist_local <- csp_edgelist %>% filter(case.type_1 != "bus/plane", case.type_2 != "bus/plane")
+
+
+csp_edgelist$time.diff_bins <- cut_width(csp_edgelist$time.diff_final, width = 14, boundary = 0)
+
+csp_edgelist_local$time.diff_bins <- cut_width(csp_edgelist_local$time.diff_final, width = 14, boundary = 0)
+
+time_bin_labels <- seq(2,66, by = 2)
+time_bin_labels[seq(2, length(time_bin_labels), by = 2)] <- " "
+
+p3b <- ggplot(csp_edgelist_local %>% group_by(time.diff_bins) %>% summarize(prop.share1hap = mean(csp.binaryshare), lower = mean(csp.binaryshare) - 1.96*sqrt((mean(csp.binaryshare)*(1-mean(csp.binaryshare)))/n()), upper = mean(csp.binaryshare) + 1.96*sqrt((mean(csp.binaryshare)*(1-mean(csp.binaryshare)))/n()), n = n()), aes(x = time.diff_bins, y = prop.share1hap, ymin = lower, ymax = upper, color = n)) +
+  geom_pointrange() +
+  scale_color_viridis_c(limits = c(0, 400000), breaks = c(100000, 200000,300000), direction = -1, end = 0.7) +
+  scale_x_discrete(labels = time_bin_labels) +
+  scale_y_continuous(limits = c(0.1,0.35)) +
+  theme_bw() +
+  labs(x = "Weeks between infections", y = expression("Proportion of pairs sharing ">="1 "~italic(csp)~" haplotype"), color = "Pairs")
+
+
+
+p3b
+
+
+csp_edgelist_local$time.diff_final_fortnight <- csp_edgelist_local$time.diff_final/14
+
+csp_time_logreg <- glm(csp.binaryshare~time.diff_final_fortnight, family = "binomial", data = csp_edgelist_local)
+
+exp(cbind(OR = coef(csp_time_logreg), confint(csp_time_logreg, method = "Wald")))
+
+
+
+
+
+
+```
+
+
+##Distance
+```{r}
+
+p3c <- ggplot(csp_edgelist_local %>% filter(time.diff_final < 61) %>% group_by(dist) %>% summarize(prop.share1hap = mean(csp.binaryshare), lower = mean(csp.binaryshare) - 1.96*sqrt((mean(csp.binaryshare)*(1-mean(csp.binaryshare)))/n()), upper = mean(csp.binaryshare) + 1.96*sqrt((mean(csp.binaryshare)*(1-mean(csp.binaryshare)))/n()), n = n()), aes(x = dist/1000, y = prop.share1hap, ymin = lower, ymax = upper, color = n)) +
+  geom_pointrange() +
+  scale_color_viridis_c(limits = c(0, 400000), breaks = c(100000, 200000,300000), direction = -1, end = 0.7) +
+  scale_y_continuous(limits = c(0.1,0.35)) +
+  theme_bw() +
+  labs(x = "Distance (km) between infections", y = expression("Proportion of pairs sharing ">="1 "~italic(csp)~" haplotype"), color = "Pairs")
+
+
+p3c
+
+
+
+
+csp_edgelist_local$dist_km <- csp_edgelist_local$dist/1000
+
+csp_dist_logreg <- glm(csp.binaryshare~dist_km, family = "binomial", data = csp_edgelist_local)
+
+exp(cbind(OR = coef(csp_dist_logreg), confint(csp_dist_logreg)))
+
+
+```
+
+##Household
+```{r}
+hh_subsample <- read.csv("data/generated_tables/hh_matches_summary.csv") %>%
+  arrange(study_id)
+
+p3d <- hh_subsample %>%
+  filter(gene == "csp") %>%
+  group_by(dataset) %>%
+  mutate(med = median(prop_match)) %>%
+  ungroup() %>%
+  ggplot()+
+  geom_jitter(aes(x = factor(dataset, levels = c("data", "random_subsample"), labels = c("Within household", "Outside household")), y = prop_match),size = 2, alpha = 0.1, color = "violetred4", height = 0.05, width = 0.2) +
+  geom_crossbar(aes(x = factor(dataset, levels = c("data", "random_subsample"), labels = c("Within household", "Outside household")), y = med, ymin = med, ymax = med)) +
+  labs(y = "", x = "Pair type")+
+  theme_bw()
+
+p3d
+
+wilcox.test(hh_subsample$prop_match[hh_subsample$gene == "csp" & hh_subsample$dataset == "data"], hh_subsample$prop_match[hh_subsample$gene == "csp" & hh_subsample$dataset == "random_subsample"], paired = TRUE)
+
+
+```
+
+
+## Combined
+```{r}
+fig3 <- ggarrange(NULL,
+                           ggarrange(p3a +
+                             guides(fill = guide_legend(ncol = 1)) +
+                             theme(legend.position = "right") +
+                             labs(fill = "Site", title = ""),
+                           ggarrange(ggarrange(p3b,
+                                              p3c +
+                                                labs(y = ""),
+                                              common.legend = TRUE,
+                                              legend = "right",
+                                              nrow = 1,
+                                              widths = c(1,1),
+                                              labels = c("", "c")),
+                                     p3d,
+                                     nrow = 1,
+                                     widths = c(2.5,1),
+                                     labels = c("", "d")),
+                           nrow = 2,
+                           labels = c("a","b"),
+                           label.x = -0.02,
+                           heights = c(1,1.5)),
+                           nrow = 1,
+                           widths = c(0.05,1))
+
+
+fig3
+
+
+
+
+ggsave(plot = fig3, "figures/fig3.png", width = 12, height = 6)
+
+ragg::agg_tiff("figures/fig3.tiff", height = 3.75, width = 7.5, units = "in", res = 600, scaling = 0.625)
+fig3
+dev.off()
+
+```
+
+# Figure S4
+```{r}
+pS4a <- ggplot(ama_merged %>% filter(case_type != "Traveler") %>% group_by(haplotype, assoc_facility) %>% summarise(n = n()) %>% unique() %>% group_by(haplotype) %>% mutate(unique_sites = n_distinct(assoc_facility)), aes(x = fct_reorder(haplotype, unique_sites, .desc = TRUE), y = n, fill = factor(assoc_facility, levels = c("Kerio", "Nadoto", "Nakechichok", "Ngiitakito", "StMonica", "StPatrick"), labels = c("Kerio", "Nadoto", "Nakechichok", "Ngiitakito", "St. Monica", "St. Patrick")))) +
+  geom_col(position = "fill", color = "white") +
+  scale_fill_viridis_d(begin = 0.3)+
+  labs(y = "Proportion", x= "Haplotype", title = "ama1")+
+  guides(fill = guide_legend(ncol = 2)) +
+  theme_bw() +
+  theme(legend.title = element_blank(), legend.position = "bottom", axis.text.x = element_text(angle = 90, vjust = 0.5, size = 8), plot.title = element_text(hjust = 0.5, face = "italic"))
+
+
+ama_edgelist <- edgelist %>%
+  ungroup() %>%
+  filter(!is.na(ama.reads_1), !is.na(ama.reads_2)) %>%
+  mutate(ama.binaryshare = ifelse(ama.shared.count > 0, 1,0))
+
+ama_edgelist_local <- ama_edgelist %>% filter(case.type_1 != "bus/plane", case.type_2 != "bus/plane")
+
+
+ama_edgelist$time.diff_bins <- cut_width(ama_edgelist$time.diff_final, width = 14, boundary = 0)
+
+ama_edgelist_local$time.diff_bins <- cut_width(ama_edgelist_local$time.diff_final, width = 14, boundary = 0)
+
+pS4b <- ggplot(ama_edgelist_local %>% group_by(time.diff_bins) %>% summarize(prop.share1hap = mean(ama.binaryshare), lower = mean(ama.binaryshare) - 1.96*sqrt((mean(ama.binaryshare)*(1-mean(ama.binaryshare)))/n()), upper = mean(ama.binaryshare) + 1.96*sqrt((mean(ama.binaryshare)*(1-mean(ama.binaryshare)))/n()), n = n()), aes(x = time.diff_bins, y = prop.share1hap, ymin = lower, ymax = upper, color = n)) +
+  geom_pointrange() +
+  scale_color_viridis_c(limits = c(0, 400000), breaks = c(100000, 200000,300000), direction = -1, end = 0.7) +
+  scale_x_discrete(labels = time_bin_labels) +
+  scale_y_continuous(limits = c(0,0.25)) +
+  theme_bw() +
+  labs(x = "Days between infections", y = expression("Proportion of pairs sharing ">="1 "~italic(ama1)~" haplotype"), color = "Pairs")
+#
+
+
+
+# ama_edgelist_local$time.diff_final_fortnight <- ama_edgelist_local$time.diff_final/14
+# 
+# ama_time_logreg <- glm(ama.binaryshare~time.diff_final_fortnight, family = "binomial", data = ama_edgelist_local)
+# 
+# exp(cbind(OR = coef(ama_time_logreg), confint(ama_time_logreg, method = "Wald")))
+
+pS4c <- ggplot(ama_edgelist_local %>% filter(time.diff_final < 61) %>% group_by(dist) %>% summarize(prop.share1hap = mean(ama.binaryshare), lower = mean(ama.binaryshare) - 1.96*sqrt((mean(ama.binaryshare)*(1-mean(ama.binaryshare)))/n()), upper = mean(ama.binaryshare) + 1.96*sqrt((mean(ama.binaryshare)*(1-mean(ama.binaryshare)))/n()), n = n()), aes(x = dist/1000, y = prop.share1hap, ymin = lower, ymax = upper, color = n)) +
+  geom_pointrange() +
+  scale_color_viridis_c(limits = c(0, 400000), breaks = c(100000, 200000,300000), direction = -1, end = 0.7) +
+  scale_y_continuous(limits = c(0,0.25)) +
+  theme_bw() +
+  labs(x = "Distance (km) between infections", y = expression("Proportion of pairs sharing ">="1 "~italic(ama1)~" haplotype"), color = "Pairs")
+
+#ama_edgelist_local$dist_km <- ama_edgelist_local$dist/1000
+
+#ama_dist_logreg <- glm(ama.binaryshare~dist_km, family = "binomial", data = ama_edgelist_local)
+
+#exp(cbind(OR = coef(ama_dist_logreg), confint(ama_dist_logreg)))
+
+pS4d <- hh_subsample %>%
+  filter(gene == "ama1") %>%
+  group_by(dataset) %>%
+  mutate(med = median(prop_match)) %>%
+  ungroup() %>%
+  ggplot()+
+  geom_jitter(aes(x = factor(dataset, levels = c("data", "random_subsample"), labels = c("Within household", "Outside household")), y = prop_match),size = 2, alpha = 0.1, color = "violetred4", height = 0.05, width = 0.2) +
+  geom_crossbar(aes(x = factor(dataset, levels = c("data", "random_subsample"), labels = c("Within household", "Outside household")), y = med, ymin = med, ymax = med)) +
+  labs(y = "", x = "Pair type")+
+  theme_bw()
+
+# wilcox.test(hh_subsample$prop_match[hh_subsample$gene == "ama1" & hh_subsample$dataset == "data"], hh_subsample$prop_match[hh_subsample$gene == "ama1" & hh_subsample$dataset == "random_subsample"], paired = TRUE)
+
+
+
+figS4 <- ggarrange(NULL,
+                           ggarrange(pS4a +
+                             guides(fill = guide_legend(ncol = 1)) +
+                             theme(legend.position = "right") +
+                             labs(fill = "Site", title = ""),
+                           ggarrange(ggarrange(pS4b,
+                                              pS4c +
+                                                labs(y = ""),
+                                              common.legend = TRUE,
+                                              legend = "right",
+                                              nrow = 1,
+                                              widths = c(1,1),
+                                              labels = c("", "c")),
+                                     pS4d,
+                                     nrow = 1,
+                                     widths = c(2.5,1),
+                                     labels = c("", "d")),
+                           nrow = 2,
+                           labels = c("a","b"),
+                           label.x = -0.02,
+                           heights = c(1,1.5)),
+                           nrow = 1,
+                           widths = c(0.05,1))
+
+
+
+
+
+
+ggsave(plot = figS4, "figures/figS4.png", width = 12, height = 6)
+
+
+
+```
+
+
+# Figure S5
+```{r}
+csp_merged$assoc_facility[is.na(csp_merged$assoc_facility)] <- "Inbound passengers"
+
+ridge_csp <- ggplot(csp_merged, aes(x = ymd(date), y = haplotype, height = stat(count), fill = factor(case_type, levels = c("Facility", "Household", "Traveler"), labels = c("Index cases", "Household members", "Inbound passengers"))))+
+  geom_density_ridges(alpha = 0.6, scale = 5, stat = "binline", binwidth = 31, panel_scaling = FALSE) +
+  facet_grid(~factor(assoc_facility, levels = c("Kerio", "Nadoto", "Nakechichok", "Ngiitakito", "StMonica", "StPatrick", "Inbound passengers"), labels = c("Kerio", "Nadoto", "Nakechichock", "Ngiitakito", "St. Monica", "St. Patrick", "Inbound passengers"))) +
+  scale_fill_manual(name = "Case type", values = casetype_colors) +
+  scale_x_date(date_labels = "%b %Y", breaks = c(ymd("2018-09-01"), ymd("2019-10-01"))) +
+  labs(fill = "Case Type", x = "Date", y = expression(~italic(csp)~"haplotype")) +
+  theme_bw() +
+  theme(axis.text.y = element_text(size = 8), strip.background = element_rect(fill = "white"))
+
+ridge_csp
+
+ggsave(plot = ridge_csp, "figures/ridge_csp.png", height = 12, width = 12)
+```
+
+# Figure S6
+```{r}
+ama_merged$assoc_facility[is.na(ama_merged$assoc_facility)] <- "Inbound passengers"
+
+ridge_ama <- ggplot(ama_merged, aes(x = ymd(date), y = haplotype, height = stat(count), fill = factor(case_type, levels = c("Facility", "Household", "Traveler"), labels = c("Index cases", "Household members", "Inbound passengers"))))+
+  geom_density_ridges(alpha = 0.6, scale = 5, stat = "binline", binwidth = 31, panel_scaling = FALSE) +
+  facet_grid(~factor(assoc_facility, levels = c("Kerio", "Nadoto", "Nakechichok", "Ngiitakito", "StMonica", "StPatrick", "Inbound passengers"), labels = c("Kerio", "Nadoto", "Nakechichock", "Ngiitakito", "St. Monica", "St. Patrick", "Inbound passengers"))) +
+  scale_fill_manual(name = "Case type", values = casetype_colors) +
+  scale_x_date(date_labels = "%b %Y", breaks = c(ymd("2018-09-01"), ymd("2019-10-01"))) +
+  labs(fill = "Case Type", x = "Date", y = expression(~italic(ama1)~"haplotype")) +
+  theme_bw() +
+  theme(axis.text.y = element_text(size = 8),strip.background = element_rect(fill = "white"))
+
+ridge_ama
+
+ggsave(plot = ridge_ama, "figures/ridge_ama.png", height = 12, width = 12)
+```
+
+#Figure 4
+## Haplotype importation perm test
+```{r}
+csp_import_perm <- readRDS("data/generated_tables/many.perm.hap_csp.RDS")
+csp.embatalk.score.hap <- readRDS("data/generated_tables/csp.embatalk.score.hap.RDS")
+
+p4b <- ggplot(csp_import_perm, aes(x = unlist(score))) +
+  geom_density(aes(y = ..scaled..),fill = "darkgrey", color = "black", bw = 0.01) +
+  geom_vline(aes(xintercept = csp.embatalk.score.hap$score), color = "#8C83EB", size = 1) +
+  scale_x_continuous(limits = c(0, 0.15), breaks = c(0,0.03,0.06,0.09,0.12, 0.15)) +
+  labs(x = "Proportion of *csp* haplotypes meeting importation criteria", y = "Scaled density") +
+  theme_bw() +
+  theme(axis.title.x = ggtext::element_markdown())
+
+p4b
+
+ama_import_perm <- readRDS("data/generated_tables/many.perm.hap_ama.RDS")
+ama.embatalk.score.hap <- readRDS("data/generated_tables/ama.embatalk.score.hap.RDS")
+
+p4c <- ggplot(ama_import_perm, aes(x = unlist(score))) +
+  geom_density(aes(y = ..scaled..),fill = "darkgrey", color = "black", bw = 0.01) +
+  geom_vline(aes(xintercept = ama.embatalk.score.hap$score), color = "#8C83EB", size = 1) +
+  scale_x_continuous(limits = c(0, 0.15), breaks = c(0,0.03,0.06,0.09,0.12, 0.15)) +
+  labs(x = "Proportion of *ama1* haplotypes meeting importation criteria", y = "Scaled density") +
+  theme_bw() +
+  theme(axis.title.x = ggtext::element_markdown())
+
+p4c
+
+
+
+
+```
+
+##imported haplotypes
+```{r}
+csp_imported <- csp_merged %>%
+  filter(str_detect(csp.embatalk.score.hap$introlist, haplotype))
+
+csp_importers <- csp_imported %>%
+  group_by(haplotype) %>%
+  filter(date == min(ymd(date)))
+
+
+ama_imported <- ama_merged %>%
+  filter(str_detect(ama.embatalk.score.hap$introlist, haplotype))
+
+ama_importers <- ama_imported %>%
+  group_by(haplotype) %>%
+  filter(date == min(ymd(date)))
+
+
+
+p4a <- ggplot(rbind(csp_imported %>% filter(haplotype %in% c("H43", "H44", "H45")) %>% mutate(haplotype = paste0("*csp* ", haplotype), gene = "csp"), ama_imported %>% filter(haplotype %in% c("H22", "H34")) %>% mutate(haplotype = paste0("*ama1* ", haplotype), gene = "ama1")), aes(x = ymd(date_final), fill = reported_travel)) +
+  geom_dotplot(binwidth = 14, dotsize = 1.5) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  scale_x_date(date_labels = "%b %Y", limits = c(ymd("2018-08-01", "2019-12-01")), breaks = c(ymd("2018-09-01"), ymd("2019-10-01"))) +
+  scale_fill_manual(values = c("#CAE8F7", "#6C61E5")) +
+  facet_wrap(~factor(haplotype, levels = c("*csp* H43", "*csp* H44", "*csp* H45", "*ama1* H22", "*ama1* H34")), ncol = 1) +
+  labs(fill = "Reported travel", x = "Date", y = "Cases") +
+  theme_bw() +
+  theme(strip.background = element_rect(fill = "white"), strip.text = ggtext::element_markdown(), legend.position = "top")
+
+p4a <- plot_panel_cols(p4a, adjustcolor(c("#ffffb3", "#ffffb3", "#8dd3c7", "#8dd3c7", "#8dd3c7"), alpha.f = 0.5))
+
+p4a
+
+```
+
+
+
+## Combining panels
+```{r}
+fig4 <- ggarrange(p4a,
+                  NULL,
+                  ggarrange(p4b,
+                            p4c,
+                            ncol = 1,
+                            labels = c("b", "c"),
+                            label.y = 1.01),
+                  NULL,
+                  widths = c(0.6,0.1,1,0.1),
+                  labels = c("a", "", "",""),
+                  label.y = 1.01,
+                  ncol = 4)
+
+fig4
+
+ggsave(plot = fig4, "figures/fig4.png", height = 8, width = 7)
+
+
+ragg::agg_tiff("figures/fig4.tiff", height = 5.6, width = 4.9, units = "in", res = 600, scaling = 0.7)
+fig4
+dev.off()
+
+```
+
+
+# Figure S7
+```{r}
+
+importers <- rbind(csp_importers, ama_importers)
+importer_colors <- c("black", "#1b9e77", "#d95f02", "#e7298a", "#7570b3", "black", "black", "black", "black", "black")
+names(importer_colors) <- levels(as.factor(importers$study_id))
+
+
+figS7 <- ggplot(rbind(csp_imported %>% mutate(haplotype = paste0("csp ", haplotype), gene = "csp"), ama_imported %>% mutate(haplotype = paste0("ama1 ", haplotype), gene = "ama1")), aes(x = ymd(date_final), fill = reported_travel)) +
+  geom_dotplot(binwidth = 14, dotsize = 1.5) +
+  scale_y_continuous(NULL, breaks = NULL) +
+  scale_x_date(date_labels = "%b %Y", limits = c(ymd("2018-08-01", "2019-12-01")), breaks = c(ymd("2018-09-01"), ymd("2019-10-01"))) +
+  scale_fill_manual(values = c("#CAE8F7", "#6C61E5")) +
+  facet_wrap(~factor(haplotype, levels = c("csp H43", "csp H31","csp H46","csp H44", "csp H40", "csp H32", "csp H45","ama1 H58", "ama1 H34", "ama1 H22", "ama1 H74", "ama1 H37", "ama1 H56", "ama1 H41", "ama1 H57", "ama1 H19", "ama1 H62",  "ama1 H59"), labels = c("*csp* H43", "*csp* H31","*csp* H46","*csp* H44", "*csp* H40", "*csp* H32", "*csp* H45","*ama1* H58", "*ama1* H34", "*ama1* H22", "*ama1* H74", "*ama1* H37", "*ama1* H56", "*ama1* H41", "*ama1* H57", "*ama1* H19", "*ama1* H62",  "*ama1* H59")), nrow = 6) +
+  geom_label_repel(rbind(csp_imported %>% mutate(haplotype = paste0("csp ", haplotype)), ama_imported %>% mutate(haplotype = paste0("ama1 ", haplotype))) %>% group_by(haplotype) %>% filter(ymd(date_final) == min(ymd(date_final))), mapping = aes(y = 0.0, label = study_id, color = factor(study_id)), fill = "white", label.padding = unit(0.1, "lines"), label.size = 0.1, size = 2.5, show.legend = FALSE) +
+  scale_color_manual(values = importer_colors) +
+  labs(fill = "Reported travel", x = "Date", y = "Cases") +
+  theme_bw() +
+  theme(strip.background = element_rect(fill = "white"), strip.text = ggtext::element_markdown())
+
+
+figS7
+
+
+
+ggsave(plot = figS7, "figures/figS7.png", height = 10, width = 7)
+
+```
+
+
+# Transmission analysis
+Reading in data
+```{r}
+pcrpos <- readRDS("data/generated_tables/R_pcrpos_narrow.RDS")
+share1csp <- readRDS("data/generated_tables/R_share1csp_narrow.RDS")
+share1ama <- readRDS("data/generated_tables/R_share1ama_narrow.RDS")
+
+
+csp_hapbyhap <- readRDS("data/generated_tables/csp_R_hapbyhap_narrow.RDS")
+ama_hapbyhap <- readRDS("data/generated_tables/ama_R_hapbyhap_narrow.RDS")
+
+
+```
+
+## Figure S8
+```{r}
+
+weights <- rbind(pcrpos$edges %>% ungroup() %>% select(weight.hh.dist) %>% mutate(network = "PCR-positive network"),
+                 share1csp$edges %>% ungroup() %>% select(weight.hh.dist) %>% mutate(network = "Share at least 1 csp haplotype"),
+                 share1ama$edges %>% ungroup() %>% select(weight.hh.dist) %>% mutate(network = "Share at least 1 ama1 haplotype"))
+
+
+figS8 <- ggplot(weights, aes(x = weight.hh.dist, fill = factor(network, levels = c("PCR-positive network", "Share at least 1 csp haplotype", "Share at least 1 ama1 haplotype")))) +
+  geom_histogram(binwidth = 0.002, color = "lightgrey")+ 
+  scale_y_continuous(trans = "log10") +
+  scale_fill_manual(values = c("grey", gene_colors))+
+  facet_wrap(~factor(network, levels = c("PCR-positive network", "Share at least 1 csp haplotype", "Share at least 1 ama1 haplotype"), labels = c("PCR-positive network", "Share at least 1 *csp* haplotype", "Share at least 1 *ama1* haplotype")), nrow = 1) +
+  theme_bw() +
+  theme(legend.position = "none", strip.text = ggtext::element_markdown()) +
+  labs(x = "Transmission weights", y = "Pairs")
+
+figS8
+
+ggsave(plot = figS8, "figures/figS8.png", height = 3, width = 7)
+
+```
+
+
+## Figure 5
+### Rt
+```{r}
+Rt <- rbind(pcrpos$Rt %>% mutate(gene_info = "PCR-positive network"),
+            share1csp$Rt %>% mutate(gene_info = "Share at least 1 *csp* haplotype"),
+            share1ama$Rt %>% mutate(gene_info = "Share at least 1 *ama1* haplotype"))
+
+p5b <- ggplot(Rt %>% filter(!is.na(Mean)), aes(x = ymd(Date), y = Mean, ymin = Lower, ymax = Upper, color = factor(network, levels = c("no_travel", "all"), labels = c("No travel reported", "All participants")), fill = factor(network, levels = c("no_travel", "all"), labels = c("No travel reported", "All participants")))) +
+  geom_line(size = 0.7)+
+  geom_ribbon(alpha = 0.3, color = NA, show.legend = FALSE) +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  scale_color_manual(values = c("#78C4EB","darkgrey"), guide = guide_legend(reverse = TRUE))+
+  scale_fill_manual(values = c("#78C4EB","darkgrey"), guide = guide_legend(reverse = TRUE))+
+  scale_x_date(date_labels = "%b %Y") +
+  facet_wrap(~factor(gene_info, levels = c("PCR-positive network", "Share at least 1 *csp* haplotype", "Share at least 1 *ama1* haplotype"))~., ncol = 3) +
+  lims(y = c(0,7)) +
+  theme_bw()+ 
+  theme(legend.position = "none", strip.text = ggtext::element_markdown()) +
+  labs(x = "Date", y = "Rt", color = "", fill = "")
+
+p5b <- plot_panel_cols(p5b, adjustcolor(c("white", "#8dd3c7", "#ffffb3"), alpha.f = 0.5))
+
+p5b
+
+```
+### R est
+```{r}
+
+R_est <- rbind(data.frame(t(pcrpos$R_all)) %>% mutate(travelers_included = "Yes", network = "PCR-positive network"),
+               data.frame(t(pcrpos$R_notravel)) %>% mutate(travelers_included = "No", network = "PCR-positive network"),
+               data.frame(t(share1csp$R_all)) %>% mutate(travelers_included = "Yes", network = "Share at least 1 csp haplotype"),
+               data.frame(t(share1csp$R_notravel)) %>% mutate(travelers_included = "No", network = "Share at least 1 csp haplotype"),
+               data.frame(t(share1ama$R_all)) %>% mutate(travelers_included = "Yes", network = "Share at least 1 ama1 haplotype"),
+               data.frame(t(share1ama$R_notravel)) %>% mutate(travelers_included = "No", network = "Share at least 1 ama1 haplotype"))
+
+p5b.1 <- ggplot(R_est, aes(y = factor(travelers_included, levels = c("No", "Yes"), labels = c("No travel reported", "All participants")), x = Mean, xmin = Lower, xmax = Upper, color = factor(travelers_included, levels = c("No", "Yes"), labels = c("No travel reported", "All participants")))) +
+  ggstance::geom_pointrangeh() +
+  geom_vline(xintercept = 1, linetype = "dotted") +
+  scale_x_continuous(limits = c(0.85, 1.15), breaks = c(0.85, 1, 1.15)) +
+  scale_color_manual(values = c("#78C4EB","darkgrey"), guide = guide_legend(reverse = TRUE))+
+  labs(y = "", color = "", x = "Estimated R") +
+  facet_wrap(~factor(network, levels = c("PCR-positive network", "Share at least 1 csp haplotype", "Share at least 1 ama1 haplotype"))~., ncol = 3) +
+  theme_bw() +
+  theme(legend.position = "bottom") +
+  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(), strip.background =  element_blank(), strip.text = element_blank())
+
+
+p5b.1
+
+
+```
+
+
+### Hap-specific R est
+```{r}
+csp_hapbyhap_t <- csp_hapbyhap %>%
+  transpose()
+
+ama_hapbyhap_t <- ama_hapbyhap %>%
+  transpose()
+
+csp_hapbyhap_R <- data.frame(t(rbind(data.frame(csp_hapbyhap_t$R_all)))) %>%
+  rownames_to_column(var = "Haplotype") %>%
+  mutate(travelers_included = "Yes") %>%
+  mutate(gene = "csp") %>%
+  rbind(data.frame(t(rbind(data.frame(csp_hapbyhap_t$R_notravel)))) %>%
+  rownames_to_column(var = "Haplotype") %>%
+  mutate(travelers_included = "No") %>%
+  mutate(gene = "csp"))
+
+ama_hapbyhap_R <- data.frame(t(rbind(data.frame(ama_hapbyhap_t$R_all)))) %>%
+  rownames_to_column(var = "Haplotype") %>%
+  mutate(travelers_included = "Yes") %>%
+  mutate(gene = "ama1") %>%
+  rbind(data.frame(t(rbind(data.frame(ama_hapbyhap_t$R_notravel)))) %>%
+  rownames_to_column(var = "Haplotype") %>%
+  mutate(travelers_included = "No") %>%
+  mutate(gene = "ama1"))
+
+
+#figuring out which haps had > 12 instances in the dataset
+
+csp_hapbyhap_nodes <- readRDS("data/generated_tables/csp_nodeslist_narrow.RDS")
+
+csp_hapcounts <- csp_hapbyhap_nodes %>%
+  bind_rows(.id = "Haplotype") %>%
+  group_by(Haplotype) %>%
+  mutate(n_total = n()) %>%
+  filter(n_total > 11) %>%
+  ungroup() %>%
+  group_by(Haplotype, reported_travel) %>%
+  summarise(n = n()) %>%
+  pivot_wider(names_from = reported_travel, values_from = n) %>%
+  filter(No > 0, Yes > 0)
+
+ama_hapbyhap_nodes <- readRDS("data/generated_tables/ama_nodeslist_narrow.RDS")
+
+ama_hapcounts <- ama_hapbyhap_nodes %>%
+  bind_rows(.id = "Haplotype") %>%
+  group_by(Haplotype) %>%
+  mutate(n_total = n()) %>%
+  filter(n_total > 11) %>%
+  ungroup() %>%
+  group_by(Haplotype, reported_travel) %>%
+  summarise(n = n()) %>%
+  pivot_wider(names_from = reported_travel, values_from = n) %>%
+  filter(No > 0, Yes > 0)
+
+
+hapbyhap <- rbind(csp_hapbyhap_R %>%
+                    filter(Haplotype %in% csp_hapcounts$Haplotype),
+                  ama_hapbyhap_R %>%
+                    filter(Haplotype %in% ama_hapcounts$Haplotype))
+
+
+
+p5c <- ggplot(hapbyhap %>% filter(), aes(x = Haplotype, y = Mean, ymin = Lower, ymax = Upper, color = factor(travelers_included, levels = c("No", "Yes"), labels = c("No travel reported", "All participants")))) +
+  geom_pointrange(alpha = 0.7) +
+  geom_errorbar(size = 0.9, alpha = 0.7, show.legend=FALSE) +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  scale_y_continuous(limits = c(0, 2.5)) +
+  scale_color_manual(values = c("#78C4EB","darkgrey"), guide = guide_legend(reverse = TRUE))+
+  labs(x = "Haplotype", color = "", y = "Estimated R") +
+  facet_wrap(~factor(gene, levels = c("csp", "ama1")), scales = "free") +
+  theme_bw() +
+  theme(strip.text = element_text(face = "italic"), legend.title = element_blank(), legend.position = "bottom", axis.text.x = element_text(angle = 90))
+
+p5c <- plot_panel_cols(p5c, adjustcolor(c("#8dd3c7", "#ffffb3"), alpha.f = 0.5))
+
+p5c
+
+
+
+
+csp_hapbyhap_Rc <- csp_hapbyhap_t$Rc %>%
+  bind_rows(.id = "Haplotype") %>%
+  filter(Haplotype %in% csp_hapcounts$Haplotype) %>%
+  group_by(Haplotype) %>%
+  summarise(p.wilcox = wilcox.test(Rc[Network == "all"], Rc[Network == "no_travel"])$p.value) %>%
+  mutate(p.bf = p.adjust(p.wilcox, n = nrow(.), method = "bonf"))
+
+
+ama_hapbyhap_Rc <- ama_hapbyhap_t$Rc %>%
+  bind_rows(.id = "Haplotype") %>%
+  filter(Haplotype %in% ama_hapcounts$Haplotype) %>%
+  group_by(Haplotype) %>%
+  summarise(p.wilcox = wilcox.test(Rc[Network == "all"], Rc[Network == "no_travel"])$p.value) %>%
+  mutate(p.bf = p.adjust(p.wilcox, n = nrow(.), method = "bonf"))
+
+
+```
+
+### Combining panels
+```{r}
+p5a <- readRDS("figures/networks_figure.rds")
+
+fig5 <- ggarrange(ggarrange(ggarrange(NULL,
+                                     p5a,
+                                     nrow = 1,
+                                     widths = c(0.03,1),
+                                     labels = c("a")),
+                   ggarrange(ggarrange(p5b +
+                                         theme(legend.position = "none"),
+                             ggarrange(NULL,
+                                       p5b.1 +
+                                         theme(legend.position = "none"),
+                                       widths = c(0.05,6)),
+                             NULL,
+                             p5c,
+                             ncol = 1,
+                             heights = c(1.5,0.7,0.1,1.5),
+                             labels = c("b", "","", "c"))),
+                 nrow = 2,
+                 heights = c(1,1.3)),
+                 NULL,
+                 ncol = 2,
+                 widths = c(1, 0.01))
+
+
+ggsave(plot = fig5, "figures/fig5.png", height = 12, width = 9.5)
+
+
+ragg::agg_tiff("figures/fig5.tiff", height = 9.48, width = 7.5, units = "in", res = 600, scaling = 0.79)
+fig5
+dev.off()
+
+
+```
+
+## csp ama1 concordance
+```{r}
+#sharing concordance
+temp <- edgelist %>%
+  ungroup() %>%
+  mutate(csp.share1 = ifelse(is.na(csp.shared.count) | csp.shared.count < 1 ,0,1), ama.share1 = ifelse(is.na(ama.shared.count) | ama.shared.count < 1,0,1), csp.ama.share1.agree = ifelse(csp.share1 == ama.share1, 1,0) )
+
+summary(temp$csp.ama.share1.agree)
+
+cont.tab <- as.matrix(table(temp$csp.share1, temp$ama.share1, useNA = "ifany"))
+
+cohen.kappa <- function(table){
+  Po = (table["0","0"] + table["1","1"])/sum(table)
+  Pe = sum(table["1",])/sum(table) * sum(table[,"1"])/sum(table) + sum(table["0",])/sum(table) * sum(table[,"0"])/sum(table)
+  k = (Po - Pe)/(1-Pe)
+  return(k)
+}
+
+
+cohen.kappa(cont.tab)
+
+library(irr)
+
+
+kappa2(temp %>% select(csp.share1, ama.share1))
+
+```
+
+## PR for houshold members
+```{r}
+
+full_dataset <- full_dataset %>%
+  mutate(rdt_bin = ifelse(rdt == "positive", "positive", "negative"))
+
+table(factor(full_dataset$reported_travel[full_dataset$case_type == "household"], levels = c("Yes", "No")), factor(full_dataset$rdt_bin[full_dataset$case_type == "household"], levels = c("positive", "negative")))
+
+exact2x2::exact2x2(table(factor(full_dataset$reported_travel[full_dataset$case_type == "household"], levels = c("Yes", "No")), factor(full_dataset$rdt_bin[full_dataset$case_type == "household"], levels = c("positive", "negative"))), tsmethod = "minlike")
+
+
+
+tbl <- data.frame(travel=factor(0:1), rdt_pos=c(387, 7), rdt_neg=c(2865, 55))
+
+mod1 <- glm(cbind(rdt_pos, rdt_neg) ~ travel, data = tbl, family = binomial(link = log))
+
+summary(mod1)
+exp(coef(mod1))
+exp(confint(mod1))
+
+
+p.reg.data <- full_dataset %>%
+  filter(case_type == "household") %>%
+  group_by(reported_travel, rdt_bin) %>%
+  tally()
+
+mod2 <- glm(n ~ rdt_bin + reported_travel, family = "poisson", data = p.reg.data)
+
+summary(mod2)
+
+
+
+
+
+```
+
+
+
+

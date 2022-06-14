@@ -1,0 +1,426 @@
+---
+title: "tables"
+author: "Christine Markwalter"
+date: "10/9/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#Loading libraries and data
+```{r}
+library(tidyverse)
+library(lubridate)
+library(gtsummary)
+library(forcats)
+library(tidygeocoder)
+library(flextable)
+
+
+full_dataset <- read.csv("data/generated_tables/turkana_full_dataset_finaldates.csv")
+csp_merged <- readRDS("data/generated_tables/csp_merged.rds")%>% 
+  filter(study_id %in% full_dataset$study_id) %>%
+  select(study_id, haplotype, reads, moi, total_reads, case_type) %>%
+  left_join(full_dataset %>% select(-csp_reads, -csp_haplotype_list, -ama_moi, -ama_reads, -ama_haplotype_list, -case_type))
+ama_merged <- readRDS("data/generated_tables/ama_merged.rds")%>% 
+  filter(study_id %in% full_dataset$study_id) %>%
+  select(study_id, haplotype, reads, moi, total_reads, case_type) %>%
+  left_join(full_dataset %>% select(-csp_reads, -csp_haplotype_list, -ama_moi, -ama_reads, -ama_haplotype_list, -case_type))
+
+
+```
+
+# Table 1
+```{r}
+t1 <- full_dataset %>%
+  select(reported_travel, case_type, age, gender, assoc_facility, urban_rural, rdt, pf_pcr_infection_status,pfr364Q_std_combined, csp_moi, ama_moi, any.symptoms, returning_visitor)%>%
+  mutate(age_bins = fct_collapse(age, "15 or younger" = c("<5", "5-10", "11-15"), "16 - 40" = c("16-20", "21-25", "26-40"), "Older than 40 years" = c("41-55", ">55"))) %>%
+  tbl_summary(by = "reported_travel",
+              missing = "no",
+              percent = "row",
+              digits = all_continuous() ~2
+              ) %>%
+  add_overall()
+t1
+
+write.csv(t1 %>% as_tibble, "data/generated_tables/t1.csv")
+
+
+t1_a <- full_dataset %>%
+  select(reported_travel, case_type, age, gender, assoc_facility, urban_rural, rdt, pf_pcr_infection_status,pfr364Q_std_combined, csp_moi, ama_moi, any.symptoms, returning_visitor)%>%
+  mutate(age_bins = fct_collapse(age, "15 or younger" = c("<5", "5-10", "11-15"), "16 - 40" = c("16-20", "21-25", "26-40"), "Older than 40 years" = c("41-55", ">55")), case_cat = ifelse(case_type == "bus/plane", "Inbound passengers", "Community Participants")) %>%
+  mutate(case_cat = factor(case_cat, levels = c("Inbound passengers", "Community Participants"))) %>%
+  tbl_strata(strata =  case_cat,
+             .tbl_fun = ~.x %>% 
+               tbl_summary(by = reported_travel, missing = "no", digits = all_continuous() ~2) %>%
+               add_p(),
+             .header = "**{strata}**, N = {n}")
+
+t1_a %>% as_flex_table() %>% save_as_docx(path = "manuscript/mod_table_1a.docx")
+
+```
+
+
+# Table S1
+```{r}
+tS1 <- full_dataset %>%
+  select(case_type, age, gender, assoc_facility, urban_rural, rdt, pf_pcr_infection_status,pfr364Q_std_combined, csp_moi, ama_moi, any.symptoms, traveled, returning_visitor)%>%
+  mutate(age_bins = fct_collapse(age, "15 or younger" = c("<5", "5-10", "11-15"), "16 - 40" = c("16-20", "21-25", "26-40"), "Older than 40 years" = c("41-55", ">55"))) %>%
+  tbl_summary(by = "case_type",
+              missing = "no",
+              percent = "row",
+              digits = all_continuous() ~2
+              ) %>%
+  add_overall()
+tS1
+
+write.csv(tS1 %>% as_tibble, "data/generated_tables/tS1.csv")
+
+```
+
+
+# Trip figures
+We want a summary of traveler characteristics, including case type, # of trips, endemicities of origin (inbound passengers) and trip destinations (inbound passengers and local travelers)
+```{r}
+travelers <- full_dataset %>%
+  filter(reported_travel == "Yes") %>%
+  mutate(num_trips = ifelse(case_type == "bus/plane", rowSums(!is.na(select(., county_trip1, county_trip2, county_trip3))) + 1, rowSums(!is.na(select(., county_trip1, county_trip2, county_trip3)))))
+
+travelers$num_trips[travelers$num_trips == 0] <- NA
+
+kenya_passenger_residence <- travelers %>% 
+  filter(case_type == "bus/plane", country_res == "KENYA") %>% 
+  select(study_id, case_type, country_res, county_res, town_res) %>%
+  mutate(address = ifelse(is.na(county_res), country_res, paste0(county_res, ", ", country_res))) %>%
+  geocode(address = address, method = "osm")
+
+#checking coordinates
+kenya_passenger_residence %>% filter(long > 50)
+kenya_passenger_residence %>% filter(long < 0)
+kenya_passenger_residence %>% filter(lat > 35)
+kenya_passenger_residence %>% filter(long < -40)
+
+write.csv(kenya_passenger_residence %>% select(lat, long) %>% unique(), "data/generated_tables/kenya_passenger_residence.csv", row.names = FALSE)
+
+international_passenger_residence <- travelers %>% 
+  filter(case_type == "bus/plane", country_res != "KENYA") %>% 
+  select(study_id, case_type, country_res, county_res, town_res) %>%
+  geocode(country = country_res, method = "osm")
+
+#checking coordinates
+international_passenger_residence %>% filter(long > 50)
+international_passenger_residence %>% filter(long < 0)
+international_passenger_residence %>% filter(lat > 35)
+international_passenger_residence %>% filter(long < -40)
+
+write.csv(international_passenger_residence %>% select(lat, long) %>% unique(), "data/generated_tables/international_passenger_residence.csv", row.names = FALSE)
+
+
+
+trips <- travelers %>%
+  select(study_id, case_type, county_trip1, county_trip2, county_trip3) %>%
+  pivot_longer(cols = c(county_trip1, county_trip2, county_trip3), names_to = "trip_num", values_to = "address") %>%
+  filter(!is.na(address)) %>%
+  mutate(address = ifelse(address %in% c("BURUNDI", "ETHIOPIA", "JUBA", "UGANDA", "SOUTH SUDAN", "SOMALIA", "RWANDA", "TANZANIA", "SUDAN"), address, paste0(address, ", KENYA"))) %>%
+  geocode(address = address, method = "osm")
+
+#checking for weird coordinates
+trips %>% filter(long > 50)
+trips %>% filter(long < 0)
+trips %>% filter(lat > 35)
+trips %>% filter(long < -40)
+
+#problems: Nandi county, Kenya, should probably be changed to Nandi, Kenya. Additionally, typo Marasabit, Kenya should be changed to Marsabit
+
+trips$address[trips$address == "NANDI COUNTY, KENYA"] <- "NANDI, KENYA"
+trips$address[trips$address == "MARASABIT, KENYA"] <- "MARSABIT, KENYA"
+
+
+trips <- trips %>%
+  select(-lat, -long) %>%
+  geocode(address = address, method = "osm")
+
+#checking for weird coordinates
+trips %>% filter(long > 50)
+trips %>% filter(long < 0)
+trips %>% filter(lat > 35)
+trips %>% filter(long < -40)
+
+write.csv(trips %>% select(lat, long) %>% rename("latitude" = "lat", "longitude" = "long") %>% unique(), "data/generated_tables/trips.csv", row.names = FALSE)
+
+# I extracted PR2-10 from malaria atlas project based on coordinates. We will merge the resulting csv files with existing trip data.
+
+kenya_passenger_residence <- kenya_passenger_residence %>%
+  mutate(lat = round(lat, digits = 6), long = round(long, digits = 6)) %>% 
+  left_join(read.csv("data/generated_tables/kenya_passenger_residence_PR.csv") %>%
+              select(latitude, longitude, year, value) %>%
+              filter(year %in% c(2018, 2019)) %>%
+              rename("lat" = "latitude", "long" = "longitude") %>%
+              mutate(lat = round(lat, digits = 6), long = round(long, digits = 6))) %>%
+  pivot_wider(names_from = year, names_prefix = "PR_", values_from = value) %>%
+  rowwise() %>%
+  mutate(PR_2018_2019 = mean(PR_2018, PR_2019, na.rm = TRUE), .keep = "unused")
+
+
+international_passenger_residence <- international_passenger_residence %>%
+  mutate(lat = round(lat, digits = 6), long = round(long, digits = 6)) %>% 
+  left_join(read.csv("data/generated_tables/international_passenger_residence_PR.csv") %>%
+              select(latitude, longitude, year, value) %>%
+              filter(year %in% c(2018, 2019)) %>%
+              rename("lat" = "latitude", "long" = "longitude") %>%
+              mutate(lat = round(lat, digits = 6), long = round(long, digits = 6))) %>%
+  pivot_wider(names_from = year, names_prefix = "PR_", values_from = value) %>%
+  rowwise() %>%
+  mutate(PR_2018_2019 = mean(PR_2018, PR_2019, na.rm = TRUE), .keep = "unused")
+
+
+trips <- trips %>%
+  mutate(lat = round(lat, digits = 6), long = round(long, digits = 6)) %>% 
+  left_join(read.csv("data/generated_tables/trips_PR.csv") %>%
+              select(latitude, longitude, year, value) %>%
+              filter(year %in% c(2018, 2019)) %>%
+              rename("lat" = "latitude", "long" = "longitude") %>%
+              mutate(lat = round(lat, digits = 6), long = round(long, digits = 6))) %>%
+  pivot_wider(names_from = year, names_prefix = "PR_", values_from = value) %>%
+  rowwise() %>%
+  mutate(PR_2018_2019 = mean(PR_2018, PR_2019, na.rm = TRUE), .keep = "unused")
+
+
+passenger_residence <- rbind(kenya_passenger_residence %>% select(-address, -PR_NA), international_passenger_residence)
+
+#The geocoder package must have updated between the first time I ran this and when I pulled the PRs. Nakuru's coordinates are slightly different (but not consequentially different), so the PR needs to be added there.
+
+passenger_residence$PR_2018_2019[passenger_residence$lat == -0.298112] <- 0.03023
+trips$PR_2018_2019[trips$lat == -0.298112] <- 0.03023
+
+
+travel_hist_fig <- rbind(passenger_residence %>%
+        as.data.frame() %>%
+        filter(county_res != "TURKANA") %>%
+        select(study_id, case_type, lat, long, PR_2018_2019) %>%
+        mutate(PR_type = "residence"),
+      trips %>%
+        as.data.frame() %>%
+        filter(!str_detect(address, "TURKANA")) %>%
+        select(study_id, case_type, lat, long, PR_2018_2019) %>%
+        mutate(PR_type = "trip")) %>%
+        group_by(PR_type, case_type) %>%
+        mutate(med = median(PR_2018_2019)) %>%
+  ggplot() +
+  geom_density(aes(x = PR_2018_2019, y = ..count.., fill = factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers")), color = factor(PR_type, levels = c("trip", "residence"), labels = c("Trip location", "Inbound passenger\nresidence"))), bw = 0.03, alpha = 0.3, show.legend = FALSE) +
+    geom_point(aes(x = med, y = 1, fill = factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers")), color = factor(PR_type, levels = c("trip", "residence"), labels = c("Trip location", "Inbound passenger\nresidence"))), pch = 21, size = 3) +
+  scale_color_manual(values = c("black", "#5AB894"), name = "") +
+  scale_fill_manual(values = c("#EB9C8F", "#EBC884", "#5AB894"), name = "Case type", guide = "none")+
+  geom_vline(xintercept = 0.08285)+
+  facet_grid(factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers"))~., scales = "free")+
+  labs(y = "Number of trips", x = "P. falciparum PR(2-10) 2018-2019") +
+  theme_bw()
+
+travel_hist_fig
+
+ggsave(plot = travel_hist_fig, "manuscript/figures/travel_hist_fig.png", height = 7, width = 7)
+
+
+num_trips_fig <- travelers %>%
+  group_by(case_type) %>%
+  mutate(med = median(num_trips, na.rm = TRUE)) %>%
+  ggplot() +
+  geom_histogram(aes(x = num_trips, fill = fct_rev(factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers"))), color = fct_rev(factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers")))), alpha = 0.3, position = "identity", binwidth = 1, drop = TRUE) +
+  geom_hline(yintercept = 0, color = "grey95", size = 0.5) +
+  geom_point(aes(x = med, y = ifelse(case_type == "facility", 25,0), fill = fct_rev(factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers"))), color = fct_rev(factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers")))), pch = 21, size = 3, show.legend = FALSE) +
+  scale_fill_manual(values = c("#5AB894", "#EBC884", "#EB9C8F"), name = "Case type", guide = guide_legend(reverse = TRUE))+
+  scale_color_manual(values = c("#5AB894", "#EBC884", "#EB9C8F"), name = "Case type", guide = guide_legend(reverse = TRUE))+
+  labs(x = "Number of trips in the last 2 months", y = "Count") +
+  theme_bw()
+  
+
+num_trips_fig
+
+
+
+alt_travel_hist_fig <- rbind(passenger_residence %>%
+        as.data.frame() %>%
+        filter(county_res != "TURKANA") %>%
+        select(study_id, case_type, lat, long, PR_2018_2019) %>%
+        mutate(PR_type = "residence"),
+      trips %>%
+        as.data.frame() %>%
+        filter(!str_detect(address, "TURKANA")) %>%
+        select(study_id, case_type, lat, long, PR_2018_2019) %>%
+        mutate(PR_type = "trip")) %>%
+        mutate(binary_large_PR = ifelse(PR_2018_2019 > 0.08285, 1, 0)) %>%
+        group_by(PR_type, case_type) %>%
+        mutate(prop_greater = mean(binary_large_PR, na.rm = TRUE), me = 1.96*sd(binary_large_PR, na.rm = TRUE)/sqrt(n())) %>%
+        ungroup() %>%
+        mutate(case_PR_type = paste0(case_type, "_", PR_type)) %>%
+  ggplot() +
+  geom_pointrange(aes(x = factor(case_PR_type, levels = c("bus/plane_residence", "bus/plane_trip", "facility_trip", "household_trip"), labels = c("Inbound\npassenger\nresidences", "Inbound\npassenger\ntrips", "Index\ncases\ntrips", "Household\nmember\ntrips")), y = prop_greater, ymin = prop_greater - me, ymax = prop_greater + me)) +
+  scale_y_continuous(limits = c(0,1))+
+  labs(x = "", y = "Proportion with PR(2-10) greater than Turkana") +
+  theme_bw()
+
+
+trip_fig <- ggarrange(num_trips_fig +
+                        theme(legend.position = "bottom", legend.title = element_blank()),
+                      NULL,
+                      alt_travel_hist_fig,
+          nrow = 1,
+          labels = c("a", "b"),
+          widths = c(1,0.05,1))
+
+ggsave(plot = trip_fig, "manuscript/figures/trip_fig.png", height = 4, width = 9)
+
+```
+
+Re-doing alt_travel_hist_fig with PfPR values averaged over the raster
+```{r}
+library("raster")
+library(sp)
+library(rgeos)
+library("rgdal")
+library(gpclib)
+library("ggplot2")
+library("dplyr")
+library(ggpubr)
+
+Pf <- raster("Mapping/2020_Global_PfPR_KEN_2018.tiff") ## If you want the PfPR_1-99 instead, you can download it from https://malariaatlas.org/trends/country/KEN and import here
+Kenya.counties.shp <- readOGR("Mapping/ken_admbnda_adm1_iebc_20191031.shp") 
+county.PfPR <- raster::extract(Pf, Kenya.counties.shp)
+county.PfPR.mean <- unlist(lapply(county.PfPR, FUN = mean, na.rm = TRUE))
+
+Kenya.counties.shp@data$id <- Kenya.counties.shp@data$ADM1_PCODE
+Kenya.counties.shp@data <- data.frame(Kenya.counties.shp@data, mPfPR = county.PfPR.mean)
+Kenya.counties.f <- fortify(Kenya.counties.shp, region = "ADM1_PCODE", name = "ADM1_EN")
+Kenya.counties.f <- left_join(Kenya.counties.f, Kenya.counties.shp@data, by = "id")
+
+summary <- Kenya.counties.f %>%
+  select(ADM1_EN, mPfPR) %>%
+  unique() %>%
+  mutate(county = toupper(ADM1_EN)) %>%
+  select(-ADM1_EN)
+
+
+
+travelers <- full_dataset %>%
+  filter(reported_travel == "Yes") %>%
+  mutate(num_trips = ifelse(case_type == "bus/plane", rowSums(!is.na(select(., county_trip1, county_trip2, county_trip3))) + 1, rowSums(!is.na(select(., county_trip1, county_trip2, county_trip3)))))
+
+travelers$num_trips[travelers$num_trips == 0] <- NA
+
+kenya_passenger_residence <- travelers %>% 
+  filter(case_type == "bus/plane", country_res == "KENYA") %>% 
+  select(study_id, case_type, country_res, county_res, town_res) %>%
+  mutate(county = county_res) 
+
+kenya_passenger_residence$county[kenya_passenger_residence$county == "HOMABAY"] <- "HOMA BAY"
+kenya_passenger_residence$county[kenya_passenger_residence$county == "ELGEYO MARAKWET"] <- "ELGEYO-MARAKWET"
+kenya_passenger_residence$county[kenya_passenger_residence$county == "THARAKA NITHI"] <- "THARAKA-NITHI"
+
+kenya_passenger_residence <- kenya_passenger_residence %>%
+  left_join(summary)
+
+international_passenger_residence <- travelers %>% 
+  filter(case_type == "bus/plane", country_res != "KENYA") %>% 
+  select(study_id, case_type, country_res, county_res, town_res)
+
+trips <- travelers %>%
+  select(study_id, case_type, county_trip1, county_trip2, county_trip3) %>%
+  pivot_longer(cols = c(county_trip1, county_trip2, county_trip3), names_to = "trip_num", values_to = "county") %>%
+  filter(!is.na(county))
+
+trips$county[trips$county == "HOMABAY"] <- "HOMA BAY"
+trips$county[trips$county == "ELGEYO MARAKWET"] <- "ELGEYO-MARAKWET"
+trips$county[trips$county == "THARAKA NITHI"] <- "THARAKA-NITHI"
+trips$county[trips$county == "MARASABIT"] <- "MARSABIT"
+trips$county[trips$county == "NANDI COUNTY"] <- "NANDI"
+trips$county[trips$county == "NAIVASHA"] <- "NAKURU"
+trips$county[trips$county == "THIKA"] <- "KIAMBU"
+
+trips <- trips %>%
+  left_join(summary) %>%
+  filter(!is.na(mPfPR))
+
+
+travel_hist_fig <- rbind(kenya_passenger_residence %>%
+        as.data.frame() %>%
+        filter(county_res != "TURKANA") %>%
+        select(study_id, case_type, mPfPR) %>%
+        mutate(PR_type = "residence"),
+      trips %>%
+        as.data.frame() %>%
+        filter(county != "TURKANA") %>%
+        select(study_id, case_type, mPfPR) %>%
+        mutate(PR_type = "trip")) %>%
+        mutate(binary_large_PR = ifelse(mPfPR > summary$mPfPR[summary$county == "TURKANA"], 1, 0)) %>%
+        group_by(PR_type, case_type) %>%
+        mutate(prop_greater = mean(binary_large_PR, na.rm = TRUE), me = 1.96*sd(binary_large_PR, na.rm = TRUE)/sqrt(n())) %>%
+        ungroup() %>%
+        mutate(case_PR_type = paste0(case_type, "_", PR_type)) %>%
+  ggplot() +
+  geom_pointrange(aes(x = factor(case_PR_type, levels = c("bus/plane_residence", "bus/plane_trip", "facility_trip", "household_trip"), labels = c("Inbound\npassenger\nresidences", "Inbound\npassenger\ntrips", "Index\ncases\ntrips", "Household\nmember\ntrips")), y = prop_greater, ymin = prop_greater - me, ymax = prop_greater + me)) +
+  scale_y_continuous(limits = c(0,1))+
+  labs(x = "", y = "Proportion with PR(2-10) greater than Turkana") +
+  theme_bw()
+
+
+travel_hist_fig
+
+
+
+
+
+```
+
+
+
+# Table 3
+```{r}
+csp.embatalk.score.hap <- readRDS("data/generated_tables/csp.embatalk.score.hap.RDS")
+ama.embatalk.score.hap <- readRDS("data/generated_tables/ama.embatalk.score.hap.RDS")
+csp_imported <- csp_merged %>%
+  filter(str_detect(csp.embatalk.score.hap$introlist, haplotype))
+
+csp_importers <- csp_imported %>%
+  group_by(haplotype) %>%
+  filter(date == min(ymd(date)))
+
+
+ama_imported <- ama_merged %>%
+  filter(str_detect(ama.embatalk.score.hap$introlist, haplotype))
+
+ama_importers <- ama_imported %>%
+  group_by(haplotype) %>%
+  filter(date == min(ymd(date)))
+
+joint_importers <- rbind(csp_importers %>% mutate(gene_imported = "csp"), ama_importers%>% mutate(gene_imported = "ama1")) %>%
+  group_by(study_id, gene_imported) %>%
+  mutate(num_haps_imported_bygene = n()) %>%
+  group_by(study_id) %>%
+  mutate(total_haps_imported = n()) %>%
+  select(study_id, gender, age, case_type, returning_visitor, assoc_facility, moi, gene_imported, num_haps_imported_bygene, total_haps_imported) %>%
+  group_by(study_id, gene_imported) %>%
+  summarize(age = first(age), case_type = first(case_type), gender = first(gender), returning_visitor = first(returning_visitor), assoc_facility = first(assoc_facility), moi = mean(moi), num_haps_imported_bygene = mean(num_haps_imported_bygene), total_haps_imported = mean(total_haps_imported)) %>%
+  pivot_wider(names_from = gene_imported, values_from = c(moi, num_haps_imported_bygene),names_sep = "_")
+
+travelers %>% 
+  filter(study_id %in% joint_importers$study_id) %>%
+  select(study_id, num_trips)
+
+
+trips %>%
+  filter(study_id %in% joint_importers$study_id) %>%
+  select(study_id, trip_num, PR_2018_2019) %>%
+  group_by(study_id) %>%
+  summarise(avg_PR = mean(PR_2018_2019), sd_PR = sd(PR_2018_2019))
+
+passenger_residence %>%
+  as.data.frame() %>%
+  filter(study_id %in% joint_importers$study_id) %>%
+  select(study_id, PR_2018_2019)
+
+```
+
+
