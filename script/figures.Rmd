@@ -256,9 +256,9 @@ dev.off()
 ```
 
 
-#Figure S2
+#Figure S3
 ```{r}
-pS2a <- ggplot(NULL, aes(x)) +
+pS3a <- ggplot(NULL, aes(x)) +
   geom_histogram(full_dataset, mapping = aes(x = ymd(date_final)), fill = "lightgray", binwidth = 31, color = "white") +
   geom_histogram(full_dataset %>% filter(pf_pcr_infection_status == "positive"), mapping = aes(x = ymd(date_final), fill = factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers"))), binwidth = 31, color = "white") +
   scale_fill_manual(values = casetype_colors) +
@@ -268,11 +268,11 @@ pS2a <- ggplot(NULL, aes(x)) +
   theme_bw() +
   theme(legend.position = 'none', strip.background = element_rect(fill = 'white'))
 
-pS2a
+pS3a
 
 
 
-pS2b <- ggplot(full_dataset %>% filter(pf_pcr_infection_status == "positive"), aes(x = pfr364Q_std_combined, group = factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers")), fill = factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers")), color = factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers")))) +
+pS3b <- ggplot(full_dataset %>% filter(pf_pcr_infection_status == "positive"), aes(x = pfr364Q_std_combined, group = factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers")), fill = factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers")), color = factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers")))) +
   geom_density(alpha = 0.5, size = 1, ) +
   geom_point(data = density_means_casetype, mapping = aes(x = med,  y = 0, color = factor(case_type, levels = c("facility", "household", "bus/plane"), labels = c("Index cases", "Household members", "Inbound passengers"))), pch = 21, size = 3, color = "white", show.legend = FALSE) +
   scale_color_manual(values = casetype_colors, name = "Case type") +
@@ -282,12 +282,12 @@ pS2b <- ggplot(full_dataset %>% filter(pf_pcr_infection_status == "positive"), a
   theme(legend.position = "none", strip.background = element_rect(fill = 'white')) +
   labs(x = "Parasites/\U00B5l", y = "Density")
 
-pS2b
+pS3b
 
 
 
 
-pS2c <- ggplot(moi %>% filter(pf_pcr_infection_status == "positive", !is.na(moi)), mapping = aes(x = moi, fill = case_type, color = case_type)) +
+pS3c <- ggplot(moi %>% filter(pf_pcr_infection_status == "positive", !is.na(moi)), mapping = aes(x = moi, fill = case_type, color = case_type)) +
   geom_histogram(aes(y = ..density..),position = "identity", alpha = 0.4, binwidth = 1, size = 0.5) +
   facet_wrap(~gene) +
   geom_point(data = moi_means_casetype, mapping = aes(x = med,  y = c(0,0,0.01,0,0,0.01), color = case_type), pch = 21, size = 3, color = "white", show.legend = FALSE) +
@@ -298,16 +298,16 @@ pS2c <- ggplot(moi %>% filter(pf_pcr_infection_status == "positive", !is.na(moi)
   labs(y = "Relative frequency within case type", x = "Multiplicity of infection") +
   theme(strip.text = element_text(face = "italic"), strip.background = element_rect(fill = 'white'))
 
-pS2c
+pS3c
 
 
 
 
 
-figS2 <- ggarrange(pS2a, 
-                  ggarrange(pS2b,
+figS3 <- ggarrange(pS3a, 
+                  ggarrange(pS3b,
                             NULL,
-                            pS2c,
+                            pS3c,
                             nrow = 1,
                             labels = c("b", "", "c"),
                             widths = c(1,0.05, 2.5)),
@@ -316,9 +316,9 @@ figS2 <- ggarrange(pS2a,
                   labels = c("a"))
 
 
-figS2
+figS3
 
-ggsave(plot = figS2, "figures/figS2.png", width = 10, height = 7)
+ggsave(plot = figS3, "figures/figS3.png", width = 10, height = 7)
 
 
 ```
@@ -326,7 +326,7 @@ ggsave(plot = figS2, "figures/figS2.png", width = 10, height = 7)
 
 
 
-#Figure S3
+#Figure S4
 Haplotype distribution stratified by travel, case type, and setting.
 ```{r}
 
@@ -357,7 +357,7 @@ hap_dist <- ggarrange(csp_hap_bygroup + theme(legend.position = "none", axis.tit
           heights = c(1,2.1),
           ncol = 1)
 
-ggsave(plot = hap_dist, "figures/figS3.png", height = 5, width = 9)
+ggsave(plot = hap_dist, "figures/figS4.png", height = 5, width = 9)
 
 ```
 
@@ -514,9 +514,9 @@ dev.off()
 
 ```
 
-# Figure S4
+# Figure S5
 ```{r}
-pS4a <- ggplot(ama_merged %>% filter(case_type != "Traveler") %>% group_by(haplotype, assoc_facility) %>% summarise(n = n()) %>% unique() %>% group_by(haplotype) %>% mutate(unique_sites = n_distinct(assoc_facility)), aes(x = fct_reorder(haplotype, unique_sites, .desc = TRUE), y = n, fill = factor(assoc_facility, levels = c("Kerio", "Nadoto", "Nakechichok", "Ngiitakito", "StMonica", "StPatrick"), labels = c("Kerio", "Nadoto", "Nakechichok", "Ngiitakito", "St. Monica", "St. Patrick")))) +
+pS5a <- ggplot(ama_merged %>% filter(case_type != "Traveler") %>% group_by(haplotype, assoc_facility) %>% summarise(n = n()) %>% unique() %>% group_by(haplotype) %>% mutate(unique_sites = n_distinct(assoc_facility)), aes(x = fct_reorder(haplotype, unique_sites, .desc = TRUE), y = n, fill = factor(assoc_facility, levels = c("Kerio", "Nadoto", "Nakechichok", "Ngiitakito", "StMonica", "StPatrick"), labels = c("Kerio", "Nadoto", "Nakechichok", "Ngiitakito", "St. Monica", "St. Patrick")))) +
   geom_col(position = "fill", color = "white") +
   scale_fill_viridis_d(begin = 0.3)+
   labs(y = "Proportion", x= "Haplotype", title = "ama1")+
@@ -537,7 +537,7 @@ ama_edgelist$time.diff_bins <- cut_width(ama_edgelist$time.diff_final, width = 1
 
 ama_edgelist_local$time.diff_bins <- cut_width(ama_edgelist_local$time.diff_final, width = 14, boundary = 0)
 
-pS4b <- ggplot(ama_edgelist_local %>% group_by(time.diff_bins) %>% summarize(prop.share1hap = mean(ama.binaryshare), lower = mean(ama.binaryshare) - 1.96*sqrt((mean(ama.binaryshare)*(1-mean(ama.binaryshare)))/n()), upper = mean(ama.binaryshare) + 1.96*sqrt((mean(ama.binaryshare)*(1-mean(ama.binaryshare)))/n()), n = n()), aes(x = time.diff_bins, y = prop.share1hap, ymin = lower, ymax = upper, color = n)) +
+pS5b <- ggplot(ama_edgelist_local %>% group_by(time.diff_bins) %>% summarize(prop.share1hap = mean(ama.binaryshare), lower = mean(ama.binaryshare) - 1.96*sqrt((mean(ama.binaryshare)*(1-mean(ama.binaryshare)))/n()), upper = mean(ama.binaryshare) + 1.96*sqrt((mean(ama.binaryshare)*(1-mean(ama.binaryshare)))/n()), n = n()), aes(x = time.diff_bins, y = prop.share1hap, ymin = lower, ymax = upper, color = n)) +
   geom_pointrange() +
   scale_color_viridis_c(limits = c(0, 400000), breaks = c(100000, 200000,300000), direction = -1, end = 0.7) +
   scale_x_discrete(labels = time_bin_labels) +
@@ -554,7 +554,7 @@ pS4b <- ggplot(ama_edgelist_local %>% group_by(time.diff_bins) %>% summarize(pro
 # 
 # exp(cbind(OR = coef(ama_time_logreg), confint(ama_time_logreg, method = "Wald")))
 
-pS4c <- ggplot(ama_edgelist_local %>% filter(time.diff_final < 61) %>% group_by(dist) %>% summarize(prop.share1hap = mean(ama.binaryshare), lower = mean(ama.binaryshare) - 1.96*sqrt((mean(ama.binaryshare)*(1-mean(ama.binaryshare)))/n()), upper = mean(ama.binaryshare) + 1.96*sqrt((mean(ama.binaryshare)*(1-mean(ama.binaryshare)))/n()), n = n()), aes(x = dist/1000, y = prop.share1hap, ymin = lower, ymax = upper, color = n)) +
+pS5c <- ggplot(ama_edgelist_local %>% filter(time.diff_final < 61) %>% group_by(dist) %>% summarize(prop.share1hap = mean(ama.binaryshare), lower = mean(ama.binaryshare) - 1.96*sqrt((mean(ama.binaryshare)*(1-mean(ama.binaryshare)))/n()), upper = mean(ama.binaryshare) + 1.96*sqrt((mean(ama.binaryshare)*(1-mean(ama.binaryshare)))/n()), n = n()), aes(x = dist/1000, y = prop.share1hap, ymin = lower, ymax = upper, color = n)) +
   geom_pointrange() +
   scale_color_viridis_c(limits = c(0, 400000), breaks = c(100000, 200000,300000), direction = -1, end = 0.7) +
   scale_y_continuous(limits = c(0,0.25)) +
@@ -567,7 +567,7 @@ pS4c <- ggplot(ama_edgelist_local %>% filter(time.diff_final < 61) %>% group_by(
 
 #exp(cbind(OR = coef(ama_dist_logreg), confint(ama_dist_logreg)))
 
-pS4d <- hh_subsample %>%
+pS5d <- hh_subsample %>%
   filter(gene == "ama1") %>%
   group_by(dataset) %>%
   mutate(med = median(prop_match)) %>%
@@ -582,20 +582,20 @@ pS4d <- hh_subsample %>%
 
 
 
-figS4 <- ggarrange(NULL,
-                           ggarrange(pS4a +
+figS5 <- ggarrange(NULL,
+                           ggarrange(pS5a +
                              guides(fill = guide_legend(ncol = 1)) +
                              theme(legend.position = "right") +
                              labs(fill = "Site", title = ""),
-                           ggarrange(ggarrange(pS4b,
-                                              pS4c +
+                           ggarrange(ggarrange(pS5b,
+                                              pS5c +
                                                 labs(y = ""),
                                               common.legend = TRUE,
                                               legend = "right",
                                               nrow = 1,
                                               widths = c(1,1),
                                               labels = c("", "c")),
-                                     pS4d,
+                                     pS5d,
                                      nrow = 1,
                                      widths = c(2.5,1),
                                      labels = c("", "d")),
@@ -611,14 +611,14 @@ figS4 <- ggarrange(NULL,
 
 
 
-ggsave(plot = figS4, "figures/figS4.png", width = 12, height = 6)
+ggsave(plot = figS5, "figures/figS5.png", width = 12, height = 6)
 
 
 
 ```
 
 
-# Figure S5
+# Figure S6
 ```{r}
 csp_merged$assoc_facility[is.na(csp_merged$assoc_facility)] <- "Inbound passengers"
 
@@ -633,10 +633,10 @@ ridge_csp <- ggplot(csp_merged, aes(x = ymd(date), y = haplotype, height = stat(
 
 ridge_csp
 
-ggsave(plot = ridge_csp, "figures/ridge_csp.png", height = 12, width = 12)
+ggsave(plot = ridge_csp, "figures/figS6.png", height = 12, width = 12)
 ```
 
-# Figure S6
+# Figure S7
 ```{r}
 ama_merged$assoc_facility[is.na(ama_merged$assoc_facility)] <- "Inbound passengers"
 
@@ -651,7 +651,7 @@ ridge_ama <- ggplot(ama_merged, aes(x = ymd(date), y = haplotype, height = stat(
 
 ridge_ama
 
-ggsave(plot = ridge_ama, "figures/ridge_ama.png", height = 12, width = 12)
+ggsave(plot = ridge_ama, "figures/figS7.png", height = 12, width = 12)
 ```
 
 #Figure 4
@@ -752,7 +752,7 @@ dev.off()
 ```
 
 
-# Figure S7
+# Figure S8
 ```{r}
 
 importers <- rbind(csp_importers, ama_importers)
@@ -760,7 +760,7 @@ importer_colors <- c("black", "#1b9e77", "#d95f02", "#e7298a", "#7570b3", "black
 names(importer_colors) <- levels(as.factor(importers$study_id))
 
 
-figS7 <- ggplot(rbind(csp_imported %>% mutate(haplotype = paste0("csp ", haplotype), gene = "csp"), ama_imported %>% mutate(haplotype = paste0("ama1 ", haplotype), gene = "ama1")), aes(x = ymd(date_final), fill = reported_travel)) +
+figS8 <- ggplot(rbind(csp_imported %>% mutate(haplotype = paste0("csp ", haplotype), gene = "csp"), ama_imported %>% mutate(haplotype = paste0("ama1 ", haplotype), gene = "ama1")), aes(x = ymd(date_final), fill = reported_travel)) +
   geom_dotplot(binwidth = 14, dotsize = 1.5) +
   scale_y_continuous(NULL, breaks = NULL) +
   scale_x_date(date_labels = "%b %Y", limits = c(ymd("2018-08-01", "2019-12-01")), breaks = c(ymd("2018-09-01"), ymd("2019-10-01"))) +
@@ -773,11 +773,11 @@ figS7 <- ggplot(rbind(csp_imported %>% mutate(haplotype = paste0("csp ", haploty
   theme(strip.background = element_rect(fill = "white"), strip.text = ggtext::element_markdown())
 
 
-figS7
+figS8
 
 
 
-ggsave(plot = figS7, "figures/figS7.png", height = 10, width = 7)
+ggsave(plot = figS8, "figures/figS8.png", height = 10, width = 7)
 
 ```
 
@@ -796,7 +796,7 @@ ama_hapbyhap <- readRDS("data/generated_tables/ama_R_hapbyhap_narrow.RDS")
 
 ```
 
-## Figure S8
+## Figure S9
 ```{r}
 
 weights <- rbind(pcrpos$edges %>% ungroup() %>% select(weight.hh.dist) %>% mutate(network = "PCR-positive network"),
@@ -804,7 +804,7 @@ weights <- rbind(pcrpos$edges %>% ungroup() %>% select(weight.hh.dist) %>% mutat
                  share1ama$edges %>% ungroup() %>% select(weight.hh.dist) %>% mutate(network = "Share at least 1 ama1 haplotype"))
 
 
-figS8 <- ggplot(weights, aes(x = weight.hh.dist, fill = factor(network, levels = c("PCR-positive network", "Share at least 1 csp haplotype", "Share at least 1 ama1 haplotype")))) +
+figS9 <- ggplot(weights, aes(x = weight.hh.dist, fill = factor(network, levels = c("PCR-positive network", "Share at least 1 csp haplotype", "Share at least 1 ama1 haplotype")))) +
   geom_histogram(binwidth = 0.002, color = "lightgrey")+ 
   scale_y_continuous(trans = "log10") +
   scale_fill_manual(values = c("grey", gene_colors))+
@@ -813,9 +813,9 @@ figS8 <- ggplot(weights, aes(x = weight.hh.dist, fill = factor(network, levels =
   theme(legend.position = "none", strip.text = ggtext::element_markdown()) +
   labs(x = "Transmission weights", y = "Pairs")
 
-figS8
+figS9
 
-ggsave(plot = figS8, "figures/figS8.png", height = 3, width = 7)
+ggsave(plot = figS9, "figures/figS9.png", height = 3, width = 7)
 
 ```
 
